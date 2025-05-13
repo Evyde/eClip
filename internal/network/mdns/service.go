@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings" // 新增导入
 	"time"
 
 	"github.com/grandcat/zeroconf"
@@ -17,7 +18,7 @@ const (
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
-	DefaultTimeout = 5 * time.Second
+	DefaultTimeout = 10 * time.Second // 从 5 秒增加到 10 秒
 )
 
 // ServiceInfo 存储了 mDNS 服务的信息
@@ -110,13 +111,30 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 				continue // 跳过完全相同的本地实例
 			}
 
-			log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s, 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
-				entry.Instance, entry.Service, entry.Domain, entry.HostName, entry.Port, entry.AddrIPv4, entry.AddrIPv6, entry.Text)
+			sanitizedHostName := entry.HostName
+			// 清理主机名：如果 entry.HostName 以 entry.Domain 结尾，
+			// 并且移除该后缀后的字符串仍然以 entry.Domain 结尾，
+			// 说明原始主机名包含了重复的域名，例如 "host.local.local."。
+			// 这种情况下，我们使用移除一次后缀后的结果 "host.local."。
+			if entry.Domain != "" && strings.HasSuffix(entry.HostName, entry.Domain) {
+				tempHostName := strings.TrimSuffix(entry.HostName, entry.Domain)
+				// 确保 tempHostName 不是空字符串，并且在移除第一个域名后，剩余部分仍然以域名结尾
+				// 例如：HostName="host.local.local.", Domain="local." -> tempHostName="host.local."
+				//       strings.HasSuffix("host.local.", "local.") is true.
+				// 例如：HostName="host.local.", Domain="local." -> tempHostName="host."
+				//       strings.HasSuffix("host.", "local.") is false.
+				if tempHostName != "" && strings.HasSuffix(tempHostName, entry.Domain) {
+					sanitizedHostName = tempHostName
+				}
+			}
+
+			log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s (原始: %s), 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
+				entry.Instance, entry.Service, entry.Domain, sanitizedHostName, entry.HostName, entry.Port, entry.AddrIPv4, entry.AddrIPv6, entry.Text)
 			discoveredServices = append(discoveredServices, &ServiceInfo{
 				Instance: entry.Instance,
 				Service:  entry.Service,
 				Domain:   entry.Domain,
-				HostName: entry.HostName,
+				HostName: sanitizedHostName, // 使用清理后的主机名
 				Port:     entry.Port,
 				AddrIPv4: entry.AddrIPv4,
 				AddrIPv6: entry.AddrIPv6,
