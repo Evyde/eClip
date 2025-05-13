@@ -103,10 +103,11 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
 			// 检查是否是本地服务实例
-			// 我们需要确保 localServiceInfo 不为 nil，并且其 HostName 和 Port 已被正确设置
-			if localServiceInfo != nil && entry.Port == localServiceInfo.Port && entry.HostName == localServiceInfo.HostName {
-				log.Printf("忽略本地服务实例: %s (%s:%d)\n", entry.Instance, entry.HostName, entry.Port)
-				continue // 跳过本地实例
+			// 我们需要确保 localServiceInfo 不为 nil，并且其 Instance 和 Port 已被正确设置
+			// 通过比较实例名和端口来确保只排除完全相同的服务实例
+			if localServiceInfo != nil && entry.Instance == localServiceInfo.Instance && entry.Port == localServiceInfo.Port {
+				log.Printf("忽略具有相同实例名和端口的本地服务实例: %s (%s:%d)\n", entry.Instance, entry.HostName, entry.Port)
+				continue // 跳过完全相同的本地实例
 			}
 
 			log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s, 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
