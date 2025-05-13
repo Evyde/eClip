@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings" // Ensure strings is imported
 	"syscall"
 	"time"
@@ -279,6 +280,13 @@ func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Dur
 // GetCurrentContent attempts to read the current clipboard content on Windows.
 // Currently only supports text.
 func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*ClipItem, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		// Log the error and proceed with an empty hostname.
+		// The peer_manager might fill it in later.
+		fmt.Printf("GetCurrentContent: Warning: Failed to get hostname: %v\n", err) // Replace with proper logging
+		hostname = ""                                                               // Default to empty if error
+	}
 	// 1. Try reading text
 	text, err := m.ReadText(ctx)
 	if err != nil {
@@ -303,7 +311,7 @@ func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*ClipI
 			Type:      Text,
 			Content:   contentBytes,
 			Timestamp: time.Now(),
-			Source:    "", // Indicate local, unspecified source
+			Source:    hostname,
 		}, nil
 	}
 
