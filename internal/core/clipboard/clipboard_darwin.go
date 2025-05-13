@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -289,6 +290,14 @@ func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Dura
 // GetCurrentContent attempts to read the current clipboard content on macOS.
 // Currently only supports text.
 func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*ClipItem, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		// Log the error and proceed with an empty hostname.
+		// The peer_manager might fill it in later.
+		fmt.Printf("GetCurrentContent: Warning: Failed to get hostname: %v\n", err) // Replace with proper logging
+		hostname = ""                                                               // Default to empty if error
+	}
+
 	// 1. Try reading text
 	text, textErr := m.ReadText(ctx)
 	if textErr != nil {
@@ -306,7 +315,7 @@ func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*ClipIt
 			Type:      Text,
 			Content:   contentBytes,
 			Timestamp: time.Now(),
-			Source:    "", // Indicate local, unspecified source
+			Source:    hostname,
 		}, nil
 	}
 
@@ -326,7 +335,7 @@ func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*ClipIt
 			Type:      Image,
 			Content:   imageData,
 			Timestamp: time.Now(),
-			Source:    "", // Indicate local, unspecified source
+			Source:    hostname,
 		}, nil
 	}
 
@@ -357,7 +366,7 @@ func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*ClipIt
 			Type:      File,
 			Content:   fileContent,
 			Timestamp: time.Now(),
-			Source:    "",       // Indicate local, unspecified source
+			Source:    hostname,
 			FilePath:  filePath, // Store the original file path
 		}, nil
 	}
@@ -376,10 +385,8 @@ func readFileContent(filePath string) ([]byte, error) {
 		return nil, fmt.Errorf("file path is empty")
 	}
 
-	// This is a simplified way to read. For large files, consider streaming or chunking.
-	// Also, add file size limits.
-	data, err := exec.Command("cat", cleanPath).Output() // Using cat for simplicity; os.ReadFile is better
-	// data, err := os.ReadFile(cleanPath) // Prefer os.ReadFile
+	// Using os.ReadFile is generally preferred over exec.Command("cat", ...)
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %w", cleanPath, err)
 	}

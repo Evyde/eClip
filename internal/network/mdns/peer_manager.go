@@ -251,24 +251,28 @@ func (pm *PeerManager) sendDataToPeer(peer *Peer, data []byte) {
 	}
 
 	var targetAddr string
-	// Prefer IPv4 if available, otherwise use HostName
-	// Using HostName is generally more robust if IPs change or multiple are available.
-	// zeroconf entry.HostName should be resolvable.
-	if peer.ServiceInfo.HostName != "" {
-		targetAddr = fmt.Sprintf("%s:%d", peer.ServiceInfo.HostName, targetPort)
-	} else if len(peer.ServiceInfo.AddrIPv4) > 0 {
+	// 优先使用 IP 地址 (IPv4 > IPv6)，然后回退到 HostName
+	if len(peer.ServiceInfo.AddrIPv4) > 0 {
 		targetAddr = fmt.Sprintf("%s:%d", peer.ServiceInfo.AddrIPv4[0].String(), targetPort)
+		logger.Log.Debugf("PeerManager: 使用 IPv4 地址 %s 连接对等节点 %s", targetAddr, peer.ID)
 	} else if len(peer.ServiceInfo.AddrIPv6) > 0 {
-		// Note: IPv6 address might need to be enclosed in brackets if HostName is not used.
+		// IPv6 地址需要用方括号括起来
 		targetAddr = fmt.Sprintf("[%s]:%d", peer.ServiceInfo.AddrIPv6[0].String(), targetPort)
+		logger.Log.Debugf("PeerManager: 使用 IPv6 地址 %s 连接对等节点 %s", targetAddr, peer.ID)
+	} else if peer.ServiceInfo.HostName != "" {
+		targetAddr = fmt.Sprintf("%s:%d", peer.ServiceInfo.HostName, targetPort)
+		logger.Log.Debugf("PeerManager: 使用主机名 %s 连接对等节点 %s", targetAddr, peer.ID)
 	} else {
-		logger.Log.Warnf("PeerManager: 对等节点 %s 没有有效的 IP 地址", peer.ID)
+		logger.Log.Warnf("PeerManager: 对等节点 %s (%s) 没有有效的 IP 地址或主机名", peer.ID, peer.ServiceInfo.Instance)
 		return
 	}
 
 	logger.Log.Debugf("PeerManager: 尝试连接到对等节点 %s (%s) 发送数据", peer.ID, targetAddr)
 	conn, err := net.DialTimeout("tcp", targetAddr, connectTimeout)
 	if err != nil {
+		// 如果使用 IP 地址连接失败，并且有主机名，可以尝试回退到主机名
+		// 但如果最初就因为主机名解析失败，这里的回退可能意义不大，除非网络环境变化
+		// 为简单起见，我们暂时不添加复杂的回退逻辑，优先IP的策略应该能改善大部分情况
 		logger.Log.Errorf("PeerManager: 连接到对等节点 %s (%s) 失败: %v", peer.ID, targetAddr, err)
 		// pm.RemovePeer(peer.ID) // 可选：连接失败则移除
 		return
