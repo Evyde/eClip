@@ -1,0 +1,40 @@
+# Default configuration for eClip
+
+# User credentials (required on first run)
+# These should be securely handled, potentially prompting the user
+# if not found or using OS keychain services in a real application.
+# For simplicity, we store them here initially.
+user:
+  username: "" # To be set by the user
+  password: "" # To be set by the user (consider hashing/secure storage)
+
+# Remote sync server configuration
+server:
+  # Address of the remote sync server (e.g., "sync.example.com:8080")
+  # An empty address disables remote sync.
+  address: "default.eclip.server:1234" # Default provided server
+  enabled: true # Whether remote sync is enabled
+
+# Local history configuration
+history:
+  # Maximum number of clipboard items to store locally
+  capacity: 100
+
+# Network configuration
+network:
+  # Port for local mDNS discovery and peer-to-peer sync
+  mdns_port: 8989
+  # Enable/disable mDNS discovery
+  mdns_enabled: true
+
+# Logging configuration
+logging:
+  # Log level: "debug", "info", "warn", "error"
+  level: "info"
+  # Path to the log file. If empty, logs to stdout/stderr.
+  file_path: "" # e.g., "/var/log/eclip.log" or platform-specific log dir
+
+# Note: In a production app, sensitive data like passwords should
+# not be stored in plain text config files. Use OS-specific secure
+# storage (Keychain on macOS, Credential Manager on Windows) or
+# prompt the user securely.

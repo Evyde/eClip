@@ -1,0 +1,1 @@
+New-Service -Name "eClip" -BinaryPathName "$PWD\eclip.exe" -StartupType Automatic
