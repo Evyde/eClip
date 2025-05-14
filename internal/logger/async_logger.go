@@ -2,9 +2,11 @@ package logger
 
 import (
 	"fmt"
-	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
+	"time"
 )
 
 // LogLevel defines the level of logging.
@@ -19,12 +21,12 @@ const (
 
 // AsyncLogger provides asynchronous logging capabilities.
 type AsyncLogger struct {
-	mu       sync.Mutex
-	logger   *log.Logger
-	logChan  chan string
-	wg       sync.WaitGroup
-	logLevel LogLevel
-	closed   bool
+	mu          sync.RWMutex
+	logChan     chan string
+	wg          sync.WaitGroup
+	logLevel    LogLevel
+	closed      bool
+	callerDepth int // 新增调用栈深度控制
 }
 
 var (
@@ -36,24 +38,33 @@ var (
 	Log *AsyncLogger
 )
 
+// 改进点1：增强调用信息获取
+func getCallerInfo(depth int) (funcName, filePath string, line int) {
+	pc, file, line, ok := runtime.Caller(depth)
+	if !ok {
+		return "unknown", "unknown", 0
+	}
+
+	// 解析函数名
+	fn := runtime.FuncForPC(pc)
+	funcName = "unknown"
+	if fn != nil {
+		funcName = filepath.Base(fn.Name())
+	}
+
+	// 简化文件路径
+	if relPath, err := filepath.Rel(os.Getenv("GOPATH"), file); err == nil {
+		file = relPath
+	}
+
+	return funcName, file, line
+}
+
 // NewAsyncLogger creates a new AsyncLogger instance.
 // It logs messages to the specified file path.
 // If filePath is empty, it logs to stderr.
 func NewAsyncLogger(filePath string, level LogLevel) (*AsyncLogger, error) {
-	var output *os.File
-	var err error
-
-	if filePath != "" {
-		output, err = os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		output = os.Stderr
-	}
-
 	l := &AsyncLogger{
-		logger:   log.New(output, "", log.LstdFlags|log.Lshortfile),
 		logChan:  make(chan string, 100), // Buffered channel
 		logLevel: level,
 	}
@@ -68,33 +79,44 @@ func NewAsyncLogger(filePath string, level LogLevel) (*AsyncLogger, error) {
 func (l *AsyncLogger) processLogs() {
 	defer l.wg.Done()
 	for msg := range l.logChan {
-		l.logger.Output(3, msg) // Output with call depth 3 to get original caller file/line
-	}
-	// If the logger was associated with a file, close it.
-	if closer, ok := l.logger.Writer().(*os.File); ok && closer != os.Stderr {
-		closer.Close()
+		// 添加时间戳和协程ID
+		// _, _, line := getCallerInfo(l.callerDepth)
+		// goroutineID := fmt.Sprintf("Goroutine-%d", getGoroutineID())
+
+		fmt.Printf("%s", msg)
 	}
 }
 
 // log sends a message to the log channel if the level is sufficient.
+// 改进点3：优化日志格式化
 func (l *AsyncLogger) log(level LogLevel, format string, v ...interface{}) {
-	l.mu.Lock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
 	if l.closed || level < l.logLevel {
-		l.mu.Unlock()
 		return
 	}
-	l.mu.Unlock()
 
-	// Format the message here to avoid doing it in the critical path if level is too low
-	msg := fmt.Sprintf(format, v...)
+	// 获取调用者信息（深度+2）
+	funcName, file, line := getCallerInfo(3)
+	var callerInfo string
+	if level < LevelDebug {
+		callerInfo = fmt.Sprintf("%s [%s:%d]", funcName, file, line)
+	} else {
+		callerInfo = funcName
+	}
 
-	// Use non-blocking send to avoid blocking the caller if the channel is full
+	// 组合完整消息
+	fullMsg := fmt.Sprintf("[%s] %s %s\n",
+		levelToString(level),
+		callerInfo,
+		fmt.Sprintf(format, v...))
+
+	// 非阻塞写入（带超时保护）
 	select {
-	case l.logChan <- fmt.Sprintf("[%s] %s", levelToString(level), msg):
-	default:
-		// Log channel is full, maybe log a warning synchronously?
-		// Or just drop the message. For now, we drop it.
-		log.Printf("WARNING: Log channel full, dropping message: %s", msg)
+	case l.logChan <- fullMsg:
+	case <-time.After(50 * time.Millisecond):
+		fmt.Printf("WARNING: Log queue overflow, dropped message: %s", fullMsg)
 	}
 }
 
@@ -105,6 +127,11 @@ func (l *AsyncLogger) Debugf(format string, v ...interface{}) {
 
 // Infof logs an info message.
 func (l *AsyncLogger) Infof(format string, v ...interface{}) {
+	l.log(LevelInfo, format, v...)
+}
+
+// Infof logs an info message.
+func (l *AsyncLogger) Printf(format string, v ...interface{}) {
 	l.log(LevelInfo, format, v...)
 }
 

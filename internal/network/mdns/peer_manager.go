@@ -55,9 +55,9 @@ func NewPeerManager(localServiceInfo *ServiceInfo, _ clipboard.Manager, syncInte
 // AddPeer 添加或更新一个对等节点
 func (pm *PeerManager) AddPeer(svcInfo *ServiceInfo) {
 	// 仅当实例名和端口都相同时，才忽略添加本地服务
-	if pm.localSvcInfo != nil && svcInfo.Instance == pm.localSvcInfo.Instance && svcInfo.Port == pm.localSvcInfo.Port {
-		logger.Log.Debugf("PeerManager: 忽略添加完全相同的本地服务 %s (端口: %d) 为对等节点", svcInfo.Instance, svcInfo.Port)
-		return
+	if pm.localSvcInfo != nil && svcInfo.Text[2] == pm.localSvcInfo.Text[2] && svcInfo.Port == pm.localSvcInfo.Port {
+		logger.Log.Debugf("忽略具有相同UUID和端口的服务实例: %s (%s:%d)\n", svcInfo.Text[2], svcInfo.HostName, svcInfo.Port)
+		return // 跳过完全相同的本地实例
 	}
 
 	pm.mu.Lock()
@@ -144,10 +144,6 @@ func (pm *PeerManager) discoverAndAddPeers(ctx context.Context, serviceType stri
 	// currentPeersOnNetwork := make(map[string]bool) // 用于检测已消失的对等点
 
 	for _, svcInfo := range discoveredServices {
-		if svcInfo.Instance == "" {
-			logger.Log.Warnf("PeerManager: 发现了一个没有实例名的服务，已忽略: %+v", svcInfo)
-			continue
-		}
 		// 仅当实例名和端口都相同时，才跳过添加
 		if pm.localSvcInfo != nil && svcInfo.Instance == pm.localSvcInfo.Instance && svcInfo.Port == pm.localSvcInfo.Port {
 			logger.Log.Debugf("PeerManager: (discoverAndAddPeers) 忽略添加完全相同的本地服务 %s (端口: %d)", svcInfo.Instance, svcInfo.Port)

@@ -2,8 +2,8 @@ package mdns
 
 import (
 	"context"
+	"eClip/internal/logger"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strings" // 新增导入
@@ -57,7 +57,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	// 不要在这里关闭监听器；它将被返回并由调用者（或 ClipboardServer）使用
 	// defer listener.Close() // 调用者负责关闭监听器
 
-	log.Printf("服务 %s 将在端口 %d 上注册（使用提供的监听器）\n", instanceName, port)
+	logger.Log.Infof("服务 %s 将在端口 %d 上注册（使用提供的监听器）", instanceName, port)
 
 	server, err := zeroconf.Register(
 		instanceName,  // 服务实例名, e.g., "My eClip Instance"
@@ -81,7 +81,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Text:     text,
 	}
 
-	log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d\n", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
+	logger.Log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
 	return server, serviceInfo, listener, nil
 }
 
@@ -108,7 +108,7 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 			// 我们需要确保 localServiceInfo 不为 nil，并且其 Instance 和 Port 已被正确设置
 			// 通过比较实例名和端口来确保只排除完全相同的服务实例
 			if localServiceInfo != nil && entry.Text[2] == localServiceInfo.Text[2] && entry.Port == localServiceInfo.Port {
-				log.Printf("忽略具有相同UUID和端口的服务实例: %s (%s:%d)\n", entry.Text[2], entry.HostName, entry.Port)
+				logger.Log.Printf("忽略具有相同UUID和端口的服务实例: %s (%s:%d)", entry.Text[2], entry.HostName, entry.Port)
 				continue // 跳过完全相同的本地实例
 			}
 
@@ -129,7 +129,7 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 				}
 			}
 
-			log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s (原始: %s), 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
+			logger.Log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s (原始: %s), 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
 				entry.Instance, entry.Service, entry.Domain, sanitizedHostName, entry.HostName, entry.Port, entry.AddrIPv4, entry.AddrIPv6, entry.Text)
 			discoveredServices = append(discoveredServices, &ServiceInfo{
 				Instance: entry.Instance,
@@ -142,17 +142,16 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 				Text:     entry.Text,
 			})
 		}
-		log.Println("服务发现协程结束.")
+		logger.Log.Printf("服务发现协程结束.")
 	}(entries)
 
-	log.Printf("开始浏览服务类型: %s.%s\n", serviceType, DefaultDomain)
+	logger.Log.Printf("开始浏览服务类型: %s.%s", serviceType, DefaultDomain)
 	err = resolver.Browse(discoveryCtx, serviceType, DefaultDomain, entries)
 	if err != nil {
 		return nil, fmt.Errorf("浏览 mDNS 服务失败: %w", err)
 	}
 
 	<-discoveryCtx.Done() // 等待浏览超时或上下文取消
-	log.Printf("服务浏览完成. 发现了 %d 个服务.\n", len(discoveredServices))
 
 	return discoveredServices, nil
 }

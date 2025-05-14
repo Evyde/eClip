@@ -66,7 +66,7 @@ func main() {
 	// 初始化日志系统
 	var err error
 	logCfg := config.GetConfig().Logging
-	logLevel := parseLogLevel(logCfg.Level)
+	logLevel := parseLogLevel("DEBUG")                                 // parseLogLevel(logCfg.Level)
 	logger.Log, err = logger.NewAsyncLogger(logCfg.FilePath, logLevel) // Initialize global logger.Log
 	if err != nil {
 		// 在 logger.Log 初始化失败时，我们不能使用 logger.Log 本身来记录错误
