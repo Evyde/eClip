@@ -46,7 +46,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		return nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
 	sanitizedHostName := strings.TrimSuffix(hostname, DefaultDomain)
-	sanitizedHostName = strings.TrimSuffix(sanitizedHostName, DefaultDomain)
+	sanitizedHostName = strings.TrimSuffix(sanitizedHostName, ".local")
 
 	// 创建一个监听器以获取动态端口
 	listener, err := net.Listen("tcp", ":0") // ":0" 表示动态分配端口
@@ -155,85 +155,3 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 
 	return discoveredServices, nil
 }
-
-// Example usage (can be moved to a main or test file)
-/*
-func main() {
-	ctx := context.Background()
-
-	// 注册服务
-	go func() {
-		// 模拟服务端的 listener，实际应用中服务逻辑会使用它
-		tempListener, err := net.Listen("tcp", ":0")
-		if err != nil {
-			log.Fatalf("无法创建临时监听器: %v", err)
-		}
-		dynamicPort := tempListener.Addr().(*net.TCPAddr).Port
-		tempListener.Close() // 立即关闭，因为我们只用端口来演示注册
-
-		// 重新实现 RegisterService 以便传递端口而不是动态获取
-		// 或者修改 RegisterService 以接受一个 listener
-		// 这里为了简单，我们假设 RegisterService 内部处理了端口
-
-		// 假设我们有一个服务实例名
-		instanceName := "MyEclipInstance"
-		// 假设我们有一些元数据
-		txtRecords := []string{"version=0.1", "user=testuser"}
-
-		// 包装 RegisterService 调用以匹配其签名
-		registerFunc := func(port int) (*zeroconf.Server, *ServiceInfo, error) {
-			server, err := zeroconf.Register(
-				instanceName,
-				DefaultServiceType,
-				DefaultDomain,
-				port,
-				txtRecords,
-				nil,
-			)
-			if err != nil {
-				return nil, nil, err
-			}
-			serviceInfo := &ServiceInfo{
-				Instance: instanceName,
-				Service:  DefaultServiceType,
-				Domain:   DefaultDomain,
-				HostName: instanceName,
-				Port:     port,
-				Text:     txtRecords,
-			}
-			return server, serviceInfo, nil
-		}
-
-
-		mdnsServer, serviceInfo, err := registerFunc(dynamicPort)
-		// mdnsServer, serviceInfo, err := RegisterService(ctx, "MyEclipInstance", DefaultServiceType, []string{"version=0.1"})
-		if err != nil {
-			log.Fatalf("无法注册服务: %v", err)
-		}
-		log.Printf("服务注册成功: %+v\n", serviceInfo)
-		defer mdnsServer.Shutdown()
-
-		// 保持服务运行
-		select {}
-	}()
-
-	// 等待一段时间让服务注册
-	time.Sleep(2 * time.Second)
-
-	// 发现服务
-	log.Println("开始发现服务...")
-	services, err := DiscoverServices(ctx, DefaultServiceType)
-	if err != nil {
-		log.Fatalf("无法发现服务: %v", err)
-	}
-
-	if len(services) == 0 {
-		log.Println("未发现任何服务.")
-	} else {
-		log.Printf("发现的服务列表 (%d):\n", len(services))
-		for i, s := range services {
-			log.Printf("  %d: %+v\n", i+1, s)
-		}
-	}
-}
-*/

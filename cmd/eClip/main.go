@@ -112,7 +112,7 @@ func main() {
 	txtRecords := []string{"app=eClip", "version=0.1.0", "id=" + deviceName}
 
 	// Register mDNS service and get the listener
-	mDNSServer, localServiceInfo, serviceListener, err := mdns.RegisterService(monitorCtx, instanceName, mdns.DefaultServiceType, txtRecords)
+	mDNSServer, localServiceInfo, serviceListener, err := mdns.RegisterService(monitorCtx, instanceName, instanceName+"."+mdns.DefaultServiceType, txtRecords)
 	if err != nil {
 		logger.Log.Errorf("mDNS 服务注册失败: %v", err)
 		panic("mDNS 服务注册失败: " + err.Error())
