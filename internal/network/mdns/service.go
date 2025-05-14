@@ -9,13 +9,12 @@ import (
 	"strings" // 新增导入
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/grandcat/zeroconf"
 )
 
 const (
 	// DefaultServiceType 是 mDNS 服务的默认类型
-	DefaultServiceType = "_eclip._tcp."
+	DefaultServiceType = "_eclip._tcp"
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
@@ -37,10 +36,6 @@ type ServiceInfo struct {
 // RegisterService 注册一个新的 mDNS 服务，并使用动态端口
 // 它返回 zeroconf 服务器、服务信息、创建的监听器和错误
 func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*zeroconf.Server, *ServiceInfo, net.Listener, error) {
-	if instanceName == "" {
-		instanceName = uuid.NewString()
-	}
-
 	if serviceType == "" {
 		serviceType = DefaultServiceType
 	}
@@ -50,6 +45,8 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
+	sanitizedHostName := strings.TrimSuffix(hostname, DefaultDomain)
+	sanitizedHostName = strings.TrimSuffix(sanitizedHostName, DefaultDomain)
 
 	// 创建一个监听器以获取动态端口
 	listener, err := net.Listen("tcp", ":0") // ":0" 表示动态分配端口
@@ -79,7 +76,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Instance: instanceName,
 		Service:  serviceType,
 		Domain:   DefaultDomain,
-		HostName: hostname, // 通常实例名可以作为主机名，或者从 os.Hostname() 获取更精确的
+		HostName: sanitizedHostName, // 通常实例名可以作为主机名，或者从 os.Hostname() 获取更精确的
 		Port:     port,
 		Text:     text,
 	}
@@ -110,8 +107,8 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 			// 检查是否是本地服务实例
 			// 我们需要确保 localServiceInfo 不为 nil，并且其 Instance 和 Port 已被正确设置
 			// 通过比较实例名和端口来确保只排除完全相同的服务实例
-			if localServiceInfo != nil && entry.Instance == localServiceInfo.Instance && entry.Port == localServiceInfo.Port {
-				log.Printf("忽略具有相同实例名和端口的本地服务实例: %s (%s:%d)\n", entry.Instance, entry.HostName, entry.Port)
+			if localServiceInfo != nil && entry.Text[2] == localServiceInfo.Text[2] && entry.Port == localServiceInfo.Port {
+				log.Printf("忽略具有相同UUID和端口的服务实例: %s (%s:%d)\n", entry.Text[2], entry.HostName, entry.Port)
 				continue // 跳过完全相同的本地实例
 			}
 

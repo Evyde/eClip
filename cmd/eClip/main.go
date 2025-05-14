@@ -16,6 +16,8 @@ import (
 	"strings" // Added for log level parsing
 	"syscall"
 	"time" // Added for clipboard monitor interval
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -102,8 +104,12 @@ func main() {
 	monitorInterval = time.Duration(monitorIntervalSeconds) * time.Second
 
 	// 初始化并注册 mDNS 服务
-	instanceName := config.GetConfig().User.DeviceName
-	txtRecords := []string{"app=eClip", "version=0.1.0"}
+	instanceName := config.GetConfig().User.Username
+	deviceName := config.GetConfig().User.DeviceName
+	if deviceName == "" {
+		deviceName = uuid.NewString()
+	}
+	txtRecords := []string{"app=eClip", "version=0.1.0", "id=" + deviceName}
 
 	// Register mDNS service and get the listener
 	mDNSServer, localServiceInfo, serviceListener, err := mdns.RegisterService(monitorCtx, instanceName, mdns.DefaultServiceType, txtRecords)

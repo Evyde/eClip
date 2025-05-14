@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -50,6 +52,9 @@ func Setup() error {
 	fmt.Print("Enter device name (leave blank will use random uuid): ")
 	deviceName, _ := reader.ReadString('\n')
 	deviceName = strings.TrimSpace(deviceName)
+	if deviceName == "" {
+		deviceName = uuid.NewString()
+	}
 
 	fmt.Print("Enter remote server URL (optional, press Enter for default): ")
 	remoteServer, _ := reader.ReadString('\n')
