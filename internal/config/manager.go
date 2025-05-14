@@ -20,8 +20,9 @@ type Config struct {
 
 // UserConfig holds user-specific settings.
 type UserConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"` // Consider secure storage like keyring
+	Username   string `yaml:"username"`
+	Password   string `yaml:"password"` // Consider secure storage like keyring
+	DeviceName string `yaml:"device_name"`
 }
 
 // ServerConfig holds remote sync server settings.

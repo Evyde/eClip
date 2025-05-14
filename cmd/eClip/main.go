@@ -11,8 +11,11 @@ import (
 	"eClip/internal/network/mdns" // Changed from internal/core/sync
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings" // Added for log level parsing
-	"time"    // Added for clipboard monitor interval
+	"syscall"
+	"time" // Added for clipboard monitor interval
 )
 
 var (
@@ -99,10 +102,7 @@ func main() {
 	monitorInterval = time.Duration(monitorIntervalSeconds) * time.Second
 
 	// 初始化并注册 mDNS 服务
-	instanceName := config.GetConfig().User.Username
-	if instanceName == "" {
-		// instanceName = "" // 让 RegisterService 处理默认值 - RegisterService 内部会使用 os.Hostname()
-	}
+	instanceName := config.GetConfig().User.DeviceName
 	txtRecords := []string{"app=eClip", "version=0.1.0"}
 
 	// Register mDNS service and get the listener
@@ -199,15 +199,15 @@ func main() {
 	logger.Log.Infof("eClip 应用已启动。按 Ctrl+C 退出。")
 
 	// 优雅地等待程序结束信号 (例如 SIGINT, SIGTERM)
-	// quitSignal := make(chan os.Signal, 1)
-	// signal.Notify(quitSignal, syscall.SIGINT, syscall.SIGTERM)
-	// <-quitSignal
-	// logger.Log.Infof("收到退出信号，正在关闭应用...")
-	// cancelMonitor() // 调用 cancelMonitor 会触发 monitorCtx.Done()
-	// // mDNSServer.Shutdown() // 已通过 defer 处理
-	// // peerManager.Stop() // 已通过 defer 处理
-	// // logger.Log.Close() // 已通过 defer 处理
-	// // history.CloseDB() // 如果有数据库操作，也需要关闭
+	quitSignal := make(chan os.Signal, 1)
+	signal.Notify(quitSignal, syscall.SIGINT, syscall.SIGTERM)
+	<-quitSignal
+	logger.Log.Infof("收到退出信号，正在关闭应用...")
+	cancelMonitor() // 调用 cancelMonitor 会触发 monitorCtx.Done()
+	// mDNSServer.Shutdown() // 已通过 defer 处理
+	// peerManager.Stop() // 已通过 defer 处理
+	// logger.Log.Close() // 已通过 defer 处理
+	// history.CloseDB() // 如果有数据库操作，也需要关闭
 
 	select {} // 保持应用运行直到被外部中断
 }

@@ -47,6 +47,10 @@ func Setup() error {
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
+	fmt.Print("Enter device name (leave blank will use hostname): ")
+	deviceName, _ := reader.ReadString('\n')
+	deviceName = strings.TrimSpace(deviceName)
+
 	fmt.Print("Enter remote server URL (optional, press Enter for default): ")
 	remoteServer, _ := reader.ReadString('\n')
 	remoteServer = strings.TrimSpace(remoteServer)
@@ -57,6 +61,7 @@ func Setup() error {
 	cfg := config.GetConfig()
 	cfg.User.Username = username
 	cfg.User.Password = password // In a real app, hash the password
+	cfg.User.DeviceName = deviceName
 	cfg.Server.Address = remoteServer
 	cfg.Server.Enabled = true // remoteServer will have a value (user input or default)
 
