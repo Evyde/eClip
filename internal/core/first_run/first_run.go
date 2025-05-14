@@ -47,7 +47,7 @@ func Setup() error {
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
-	fmt.Print("Enter device name (leave blank will use hostname): ")
+	fmt.Print("Enter device name (leave blank will use random uuid): ")
 	deviceName, _ := reader.ReadString('\n')
 	deviceName = strings.TrimSpace(deviceName)
 

@@ -9,6 +9,7 @@ import (
 	"strings" // 新增导入
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/grandcat/zeroconf"
 )
 
@@ -37,14 +38,17 @@ type ServiceInfo struct {
 // 它返回 zeroconf 服务器、服务信息、创建的监听器和错误
 func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*zeroconf.Server, *ServiceInfo, net.Listener, error) {
 	if instanceName == "" {
-		hostname, err := os.Hostname()
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
-		}
-		instanceName = hostname
+		instanceName = uuid.NewString()
 	}
+
 	if serviceType == "" {
 		serviceType = DefaultServiceType
+	}
+
+	hostname, err := os.Hostname()
+
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
 
 	// 创建一个监听器以获取动态端口
@@ -75,7 +79,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Instance: instanceName,
 		Service:  serviceType,
 		Domain:   DefaultDomain,
-		HostName: instanceName, // 通常实例名可以作为主机名，或者从 os.Hostname() 获取更精确的
+		HostName: hostname, // 通常实例名可以作为主机名，或者从 os.Hostname() 获取更精确的
 		Port:     port,
 		Text:     text,
 	}
