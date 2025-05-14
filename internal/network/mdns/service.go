@@ -112,6 +112,11 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 				continue // 跳过完全相同的本地实例
 			}
 
+			if localServiceInfo != nil && entry.Instance != localServiceInfo.Instance {
+				logger.Log.Printf("忽略别人的服务实例: [%s]-x-[%s]", entry.Instance, localServiceInfo.Instance)
+				continue // 跳过完全相同的本地实例
+			}
+
 			sanitizedHostName := entry.HostName
 			// 清理主机名：如果 entry.HostName 以 entry.Domain 结尾，
 			// 并且移除该后缀后的字符串仍然以 entry.Domain 结尾，

@@ -144,11 +144,6 @@ func (pm *PeerManager) discoverAndAddPeers(ctx context.Context, serviceType stri
 	// currentPeersOnNetwork := make(map[string]bool) // 用于检测已消失的对等点
 
 	for _, svcInfo := range discoveredServices {
-		// 仅当实例名和端口都相同时，才跳过添加
-		if pm.localSvcInfo != nil && svcInfo.Instance == pm.localSvcInfo.Instance && svcInfo.Port == pm.localSvcInfo.Port {
-			logger.Log.Debugf("PeerManager: (discoverAndAddPeers) 忽略添加完全相同的本地服务 %s (端口: %d)", svcInfo.Instance, svcInfo.Port)
-			continue // 不添加自己
-		}
 		pm.AddPeer(svcInfo)
 		// currentPeersOnNetwork[svcInfo.Instance] = true
 	}
