@@ -154,7 +154,7 @@ func main() {
 
 	// 使用声明的 peerManager 变量
 	peerManager = mdns.NewPeerManager(localServiceInfo, clipManager, peerManagerSyncInterval)
-	peerManager.StartDiscovery(monitorCtx, mdns.DefaultServiceType) // 使用 monitorCtx
+	peerManager.StartDiscovery(monitorCtx, instanceName+"."+mdns.DefaultServiceType) // 使用 monitorCtx
 	// peerManager.StartSyncServer(monitorCtx) // This line is removed as PeerManager no longer starts its own server.
 	// Incoming clipboard data is handled by network.ClipboardServer.
 	logger.Log.Infof("PeerManager 服务发现已启动。")
