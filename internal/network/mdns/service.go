@@ -14,7 +14,7 @@ import (
 
 const (
 	// DefaultServiceType 是 mDNS 服务的默认类型
-	DefaultServiceType = "_eclip._tcp"
+	DefaultServiceType = "_http._tcp"
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
@@ -104,6 +104,8 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
+			logger.Log.Debugf("发现服务: %s", entry)
+
 			// 检查是否是本地服务实例
 			// 我们需要确保 localServiceInfo 不为 nil，并且其 Instance 和 Port 已被正确设置
 			// 通过比较实例名和端口来确保只排除完全相同的服务实例

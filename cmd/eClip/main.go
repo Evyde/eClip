@@ -109,7 +109,7 @@ func main() {
 	if deviceName == "" {
 		deviceName = uuid.NewString()
 	}
-	txtRecords := []string{"app=eClip", "version=0.1.0", "id=" + deviceName}
+	txtRecords := []string{"eClip", "0.1.0", deviceName}
 
 	// Register mDNS service and get the listener
 	mDNSServer, localServiceInfo, serviceListener, err := mdns.RegisterService(monitorCtx, instanceName, mdns.DefaultServiceType, txtRecords)
