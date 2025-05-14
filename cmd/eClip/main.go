@@ -208,6 +208,4 @@ func main() {
 	// peerManager.Stop() // 已通过 defer 处理
 	// logger.Log.Close() // 已通过 defer 处理
 	// history.CloseDB() // 如果有数据库操作，也需要关闭
-
-	select {} // 保持应用运行直到被外部中断
 }
