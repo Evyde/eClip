@@ -14,7 +14,7 @@ import (
 
 const (
 	// DefaultServiceType 是 mDNS 服务的默认类型
-	DefaultServiceType = "_http._tcp"
+	DefaultServiceType = "_eclip._tcp"
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
