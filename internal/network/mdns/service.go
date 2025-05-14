@@ -15,7 +15,7 @@ import (
 
 const (
 	// DefaultServiceType 是 mDNS 服务的默认类型
-	DefaultServiceType = "_eclip._tcp"
+	DefaultServiceType = "_eclip._tcp."
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
@@ -84,7 +84,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Text:     text,
 	}
 
-	log.Printf("mDNS 服务已注册: %s.%s%s, 主机: %s, 端口: %d\n", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
+	log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d\n", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
 	return server, serviceInfo, listener, nil
 }
 
