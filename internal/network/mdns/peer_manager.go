@@ -30,22 +30,24 @@ type Peer struct {
 
 // PeerManager 管理已发现的对等节点
 type PeerManager struct {
-	mu           sync.RWMutex
-	peers        map[string]*Peer
-	localSvcInfo *ServiceInfo  // 本地服务的信息，用于避免连接自身和设置源ID
-	syncInterval time.Duration // 服务发现间隔
-	stopChan     chan struct{} // 用于停止服务发现
-	// clipboardManager clipboard.Manager // No longer needed as PeerManager doesn't handle incoming data
+	mu                 sync.RWMutex
+	peers              map[string]*Peer
+	localSvcInfo       *ServiceInfo    // 本地服务的信息，用于避免连接自身和设置源ID
+	selectedInterfaces []net.Interface // 用于服务发现的网络接口
+	syncInterval       time.Duration   // 服务发现间隔
+	stopChan           chan struct{}   // 用于停止服务发现
+	// clipboardManager clipboard.Manager // No longer needed as PeerManager doesn't handle incoming data directly.
 	// isServerRunning  bool              // No longer needed
 	// listener         net.Listener      // No longer needed
 }
 
 // NewPeerManager 创建一个新的 PeerManager
 // clipManager is removed as PeerManager no longer handles incoming data directly.
-func NewPeerManager(localServiceInfo *ServiceInfo, _ clipboard.Manager, syncInterval time.Duration) *PeerManager {
+func NewPeerManager(localServiceInfo *ServiceInfo, _ clipboard.Manager, syncInterval time.Duration, interfaces []net.Interface) *PeerManager {
 	return &PeerManager{
-		peers:        make(map[string]*Peer),
-		localSvcInfo: localServiceInfo,
+		peers:              make(map[string]*Peer),
+		localSvcInfo:       localServiceInfo,
+		selectedInterfaces: interfaces,
 		// clipboardManager: clipManager, // Removed
 		syncInterval: syncInterval,
 		stopChan:     make(chan struct{}),
@@ -133,8 +135,8 @@ func (pm *PeerManager) StartDiscovery(ctx context.Context, serviceType string) {
 
 func (pm *PeerManager) discoverAndAddPeers(ctx context.Context, serviceType string) {
 	logger.Log.Debugf("PeerManager: 正在发现服务类型 %s ...", serviceType)
-	// 将 pm.localSvcInfo 传递给 DiscoverServices
-	discoveredServices, err := DiscoverServices(ctx, serviceType, pm.localSvcInfo)
+	// 将 pm.localSvcInfo 和 pm.selectedInterfaces 传递给 DiscoverServices
+	discoveredServices, err := DiscoverServices(ctx, serviceType, pm.localSvcInfo, pm.selectedInterfaces)
 	if err != nil {
 		logger.Log.Errorf("PeerManager: 服务发现失败: %v", err)
 		return

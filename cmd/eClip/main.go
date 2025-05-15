@@ -112,7 +112,7 @@ func main() {
 	txtRecords := []string{"eClip", "0.1.0", deviceName}
 
 	// Register mDNS service and get the listener
-	mDNSServer, localServiceInfo, serviceListener, err := mdns.RegisterService(monitorCtx, instanceName, mdns.DefaultServiceType, txtRecords)
+	mDNSServer, localServiceInfo, serviceListener, selectedInterfaces, err := mdns.RegisterService(monitorCtx, instanceName, mdns.DefaultServiceType, txtRecords)
 	if err != nil {
 		logger.Log.Errorf("mDNS 服务注册失败: %v", err)
 		panic("mDNS 服务注册失败: " + err.Error())
@@ -153,7 +153,7 @@ func main() {
 	// TODO: 从配置读取 PeerManager 同步间隔 config.GetConfig().Sync.DiscoveryIntervalSeconds
 
 	// 使用声明的 peerManager 变量
-	peerManager = mdns.NewPeerManager(localServiceInfo, clipManager, peerManagerSyncInterval)
+	peerManager = mdns.NewPeerManager(localServiceInfo, clipManager, peerManagerSyncInterval, selectedInterfaces)
 	peerManager.StartDiscovery(monitorCtx, mdns.DefaultServiceType) // 使用 monitorCtx
 	// peerManager.StartSyncServer(monitorCtx) // This line is removed as PeerManager no longer starts its own server.
 	// Incoming clipboard data is handled by network.ClipboardServer.

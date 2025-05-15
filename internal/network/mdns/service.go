@@ -94,8 +94,8 @@ func getSuitableInterfaces() ([]net.Interface, error) {
 }
 
 // RegisterService 注册一个新的 mDNS 服务，并使用动态端口
-// 它返回 zeroconf 服务器、服务信息、创建的监听器和错误
-func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*zeroconf.Server, *ServiceInfo, net.Listener, error) {
+// 它返回 zeroconf 服务器、服务信息、创建的监听器、选择的网络接口和错误
+func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*zeroconf.Server, *ServiceInfo, net.Listener, []net.Interface, error) {
 	if serviceType == "" {
 		serviceType = DefaultServiceType
 	}
@@ -103,7 +103,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	hostname, err := os.Hostname()
 
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
 	sanitizedHostName := strings.TrimSuffix(hostname, DefaultDomain)
 	sanitizedHostName = strings.TrimSuffix(sanitizedHostName, ".local")
@@ -111,7 +111,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	// 创建一个监听器以获取动态端口
 	listener, err := net.Listen("tcp", ":0") // ":0" 表示动态分配端口
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("无法创建监听器以获取动态端口: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("无法创建监听器以获取动态端口: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	// 不要在这里关闭监听器；它将被返回并由调用者（或 ClipboardServer）使用
@@ -139,7 +139,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	)
 	if err != nil {
 		listener.Close() // 如果注册失败，关闭监听器
-		return nil, nil, nil, fmt.Errorf("无法注册 mDNS 服务: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("无法注册 mDNS 服务: %w", err)
 	}
 
 	serviceInfo := &ServiceInfo{
@@ -152,16 +152,29 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	}
 
 	logger.Log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
-	return server, serviceInfo, listener, nil
+	return server, serviceInfo, listener, selectedInterfaces, nil
 }
 
 // DiscoverServices 发现指定类型的 mDNS 服务，并排除本地服务实例
-func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo *ServiceInfo) ([]*ServiceInfo, error) {
+// interfaces 参数指定用于发现的网络接口，如果为 nil，则使用默认接口
+func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo *ServiceInfo, interfaces []net.Interface) ([]*ServiceInfo, error) {
 	if serviceType == "" {
 		serviceType = DefaultServiceType
 	}
 
-	resolver, err := zeroconf.NewResolver(nil) // nil 表示使用默认网络接口
+	// 使用提供的接口或默认接口创建解析器
+	var resolver *zeroconf.Resolver
+	var err error
+
+	if len(interfaces) > 0 {
+		logger.Log.Debugf("DiscoverServices: 使用特定接口: %v", interfaces)
+		resolver, err = zeroconf.NewResolver(zeroconf.SelectIfaces(interfaces))
+	} else {
+		// 如果没有提供接口，则使用 zeroconf 的默认行为（通常是所有接口）
+		logger.Log.Debugf("DiscoverServices: 未提供特定接口，将使用 zeroconf 默认接口")
+		resolver, err = zeroconf.NewResolver()
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("无法创建 mDNS 解析器: %w", err)
 	}
