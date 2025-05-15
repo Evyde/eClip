@@ -5,7 +5,8 @@ import (
 	"eClip/internal/logger"
 	"fmt"
 	"net"
-	"os"      // 新增导入，用于潜在的 OS 特定逻辑
+	"os" // 新增导入，用于潜在的 OS 特定逻辑
+	"runtime"
 	"strings" // 新增导入
 	"time"
 
@@ -120,22 +121,30 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	logger.Log.Infof("服务 %s 将在端口 %d 上注册（使用提供的监听器）", instanceName, port)
 
 	// 获取用于 mDNS 的网络接口
-	selectedInterfaces, err := getSuitableInterfaces()
-	if err != nil {
-		// 即使获取接口列表失败，也记录警告并尝试使用 nil（让库选择）
-		logger.Log.Warnf("获取特定网络接口失败，将依赖 zeroconf 库的默认选择: %v", err)
-		// selectedInterfaces 将为 nil
+	var interfacesForRegistration []net.Interface
+	var errGetInterfaces error
+
+	if runtime.GOOS == "windows" {
+		logger.Log.Infof("当前操作系统为 Windows，将让 zeroconf 库自动选择注册接口。")
+		interfacesForRegistration = nil // 在 Windows 上，让库自己选择
+	} else {
+		logger.Log.Debugf("当前操作系统非 Windows (%s)，将尝试选择特定接口进行注册。", runtime.GOOS)
+		interfacesForRegistration, errGetInterfaces = getSuitableInterfaces()
+		if errGetInterfaces != nil {
+			logger.Log.Warnf("获取特定网络接口失败 (%s)，将依赖 zeroconf 库的默认选择: %v", runtime.GOOS, errGetInterfaces)
+			// 保持 interfacesForRegistration 为 nil 或其当前值（可能是 nil）
+		}
 	}
 	// 如果 selectedInterfaces 为空切片但没有错误 (例如 getSuitableInterfaces 返回 nil, nil),
 	// zeroconf.Register 传入 nil 也是其默认行为。
 
 	server, err := zeroconf.Register(
-		instanceName,       // 服务实例名, e.g., "My eClip Instance"
-		serviceType,        // 服务类型, e.g., "_eclip._tcp"
-		DefaultDomain,      // 域名, e.g., "local."
-		port,               // 服务端口
-		text,               // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
-		selectedInterfaces, // 使用选择的或 nil 网络接口
+		instanceName,              // 服务实例名, e.g., "My eClip Instance"
+		serviceType,               // 服务类型, e.g., "_eclip._tcp"
+		DefaultDomain,             // 域名, e.g., "local."
+		port,                      // 服务端口
+		text,                      // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
+		interfacesForRegistration, // 在 Windows 上使用 nil，其他系统使用选择的接口
 	)
 	if err != nil {
 		listener.Close() // 如果注册失败，关闭监听器
@@ -152,7 +161,30 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	}
 
 	logger.Log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
-	return server, serviceInfo, listener, selectedInterfaces, nil
+	// RegisterService 返回的 selectedInterfaces 应该是实际用于注册的接口，
+	// 或者在 Windows 情况下，它可能是 getSuitableInterfaces 的结果，即使注册时用了 nil。
+	// 为了保持一致性，如果 Windows 上注册用了 nil，我们应该返回 getSuitableInterfaces 的结果给 PeerManager，
+	// 因为 PeerManager 可能仍想基于这些信息做决策，或者 DiscoverServices 仍可能需要它们。
+	// 或者，更清晰的做法是，让 RegisterService 返回 getSuitableInterfaces() 的结果，
+	// 而实际传递给 zeroconf.Register 的是根据 OS 调整后的接口列表。
+	// 当前的修改是直接将 getSuitableInterfaces() 的结果 (selectedInterfaces) 返回，
+	// 但在 Windows 上注册时实际用的是 nil。
+	// 我们需要确保返回给 main.go 的 selectedInterfaces 是 getSuitableInterfaces() 的原始结果，
+	// 以便 DiscoverServices 仍然可以接收到这些接口（如果非 Windows）。
+
+	// 重新获取 selectedInterfaces 以便正确返回给调用者，供 DiscoverServices 使用
+	// 这确保了即使在 Windows 上注册时使用了 nil，PeerManager 仍然可以基于 getSuitableInterfaces 的结果来调用 DiscoverServices
+	var finalSelectedInterfacesForReturn []net.Interface
+	if runtime.GOOS != "windows" { // 对于非 Windows，我们返回实际尝试用于注册的接口
+		finalSelectedInterfacesForReturn = interfacesForRegistration
+	} else { // 对于 Windows，虽然注册时用了 nil，但我们仍然可以返回 getSuitableInterfaces 的结果，以便 DiscoverServices (如果需要) 可以使用
+		// 或者，如果 Windows 上的 DiscoverServices 也应该用 nil，那么这里可以返回 nil。
+		// 鉴于我们之前的修改是让 DiscoverServices 使用特定接口，这里返回 getSuitableInterfaces 的结果。
+		ifs, _ := getSuitableInterfaces() // 忽略错误，因为之前可能已经记录
+		finalSelectedInterfacesForReturn = ifs
+	}
+
+	return server, serviceInfo, listener, finalSelectedInterfacesForReturn, nil
 }
 
 // DiscoverServices 发现指定类型的 mDNS 服务，并排除本地服务实例
