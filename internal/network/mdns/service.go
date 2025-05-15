@@ -119,22 +119,15 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 
 	logger.Log.Infof("服务 %s 将在端口 %d 上注册（使用提供的监听器）", instanceName, port)
 
-	// 获取用于 mDNS 的网络接口
-	// 既然库的 master 版本已修复 Windows 问题，我们不再需要 OS 特定逻辑来为 Register 传递 nil 接口。
-	// 统一尝试使用 getSuitableInterfaces() 的结果。
-	selectedInterfaces, errGetInterfaces := getSuitableInterfaces()
-	if errGetInterfaces != nil {
-		logger.Log.Warnf("获取特定网络接口失败，将依赖 zeroconf 库的默认选择: %v", errGetInterfaces)
-		// selectedInterfaces 可能为 nil，zeroconf.Register 会处理这种情况
-	}
-
+	// 让库自动选择网络接口进行注册
+	logger.Log.Infof("RegisterService: 将让 zeroconf 库自动选择注册接口。")
 	server, err := zeroconf.Register(
-		instanceName,       // 服务实例名, e.g., "My eClip Instance"
-		serviceType,        // 服务类型, e.g., "_eclip._tcp"
-		DefaultDomain,      // 域名, e.g., "local."
-		port,               // 服务端口
-		text,               // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
-		selectedInterfaces, // 统一使用选择的接口（或 nil，如果 getSuitableInterfaces 失败/返回 nil）
+		instanceName,  // 服务实例名, e.g., "My eClip Instance"
+		serviceType,   // 服务类型, e.g., "_eclip._tcp"
+		DefaultDomain, // 域名, e.g., "local."
+		port,          // 服务端口
+		text,          // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
+		nil,           // 总是传递 nil，让库自动选择接口
 	)
 	if err != nil {
 		listener.Close() // 如果注册失败，关闭监听器
@@ -151,9 +144,8 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	}
 
 	logger.Log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
-	// RegisterService 现在总是返回 getSuitableInterfaces() 的结果（或 nil），
-	// 这个结果将传递给 PeerManager，并最终可能用于 DiscoverServices。
-	return server, serviceInfo, listener, selectedInterfaces, nil
+	// 由于我们不再选择接口，返回 nil 作为接口列表
+	return server, serviceInfo, listener, nil, nil
 }
 
 // DiscoverServices 发现指定类型的 mDNS 服务，并排除本地服务实例
@@ -167,14 +159,10 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 	var resolver *zeroconf.Resolver
 	var err error
 
-	if len(interfaces) > 0 {
-		logger.Log.Debugf("DiscoverServices: 使用特定接口进行发现: %v", interfaces)
-		resolver, err = zeroconf.NewResolver(zeroconf.SelectIfaces(interfaces))
-	} else {
-		// 如果没有提供接口，则使用 zeroconf 的默认行为（通常是所有接口）
-		logger.Log.Debugf("DiscoverServices: 未提供特定接口，将使用 zeroconf 默认接口进行发现")
-		resolver, err = zeroconf.NewResolver()
-	}
+	// 总是让库自动选择网络接口进行发现
+	// interfaces 参数（来自 PeerManager，最终来自 RegisterService 的返回）现在总是 nil，但我们在这里明确忽略它
+	logger.Log.Infof("DiscoverServices: 将让 zeroconf 库自动选择发现接口 (传递的interfaces参数被忽略: %v)", interfaces)
+	resolver, err = zeroconf.NewResolver() // 总是使用默认接口
 
 	if err != nil {
 		return nil, fmt.Errorf("无法创建 mDNS 解析器: %w", err)
