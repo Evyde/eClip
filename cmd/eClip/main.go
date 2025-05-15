@@ -149,7 +149,7 @@ func main() {
 
 	// 初始化 PeerManager
 	// PeerManager 的同步间隔可以从配置中读取
-	peerManagerSyncInterval := 15 * time.Second // 从 30 秒减少到 15 秒
+	peerManagerSyncInterval := 3 * time.Second // 配合1秒的发现超时，设置为3秒
 	// TODO: 从配置读取 PeerManager 同步间隔 config.GetConfig().Sync.DiscoveryIntervalSeconds
 
 	// 使用声明的 peerManager 变量

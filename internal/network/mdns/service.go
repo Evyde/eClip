@@ -18,7 +18,7 @@ const (
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
-	DefaultTimeout = 10 * time.Second // 从 5 秒增加到 10 秒
+	DefaultTimeout = 1 * time.Second // 缩短到 1 秒
 )
 
 // ServiceInfo 存储了 mDNS 服务的信息
