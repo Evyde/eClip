@@ -5,7 +5,7 @@ import (
 	"eClip/internal/logger"
 	"fmt"
 	"net"
-	"os"
+	"os"      // 新增导入，用于潜在的 OS 特定逻辑
 	"strings" // 新增导入
 	"time"
 
@@ -31,6 +31,66 @@ type ServiceInfo struct {
 	AddrIPv4 []net.IP
 	AddrIPv6 []net.IP
 	Text     []string
+}
+
+// getSuitableInterfaces 获取用于 mDNS 注册的合适网络接口。
+// 它会选择 UP、支持 MULTICAST 且非 LOOPBACK 的接口。
+func getSuitableInterfaces() ([]net.Interface, error) {
+	var suitableInterfaces []net.Interface
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("获取网络接口失败: %w", err)
+	}
+
+	for _, ifi := range interfaces {
+		if (ifi.Flags&net.FlagUp == 0) || (ifi.Flags&net.FlagMulticast == 0) || (ifi.Flags&net.FlagLoopback != 0) {
+			logger.Log.Debugf("跳过不合适的接口: %s, Flags: %s", ifi.Name, ifi.Flags.String())
+			continue
+		}
+
+		// 附加检查：确保接口至少有一个可用的 IP 地址（可选，但推荐）
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			logger.Log.Warnf("无法获取接口 %s 的地址，跳过: %v", ifi.Name, err)
+			continue
+		}
+		if len(addrs) == 0 {
+			logger.Log.Debugf("接口 %s 没有地址，跳过", ifi.Name)
+			continue
+		}
+
+		// 检查是否有有效的 IPv4 或 IPv6 地址 (非仅链接本地)
+		hasValidIP := false
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
+				if ipnet.IP.To4() != nil || ipnet.IP.To16() != nil {
+					hasValidIP = true
+					break
+				}
+			}
+		}
+		if !hasValidIP {
+			logger.Log.Debugf("接口 %s 没有有效的全局单播 IPv4/IPv6 地址，跳过", ifi.Name)
+			continue
+		}
+
+		logger.Log.Debugf("找到合适的接口: %s, Flags: %s, MTU: %d", ifi.Name, ifi.Flags.String(), ifi.MTU)
+		suitableInterfaces = append(suitableInterfaces, ifi)
+	}
+
+	if len(suitableInterfaces) == 0 {
+		// 如果没有找到合适的接口，返回 nil，让 zeroconf 库决定使用哪些接口（通常是所有接口）
+		// 这在某些虚拟化环境中可能是必要的，或者如果上述过滤过于严格
+		logger.Log.Warnf("未找到符合特定条件的网络接口。将依赖 zeroconf 库的默认接口选择。")
+		return nil, nil
+	}
+
+	selectedInterfaceNames := make([]string, len(suitableInterfaces))
+	for i, ifi := range suitableInterfaces {
+		selectedInterfaceNames[i] = ifi.Name
+	}
+	logger.Log.Infof("为 mDNS 选择的特定网络接口: %v", selectedInterfaceNames)
+	return suitableInterfaces, nil
 }
 
 // RegisterService 注册一个新的 mDNS 服务，并使用动态端口
@@ -59,13 +119,23 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 
 	logger.Log.Infof("服务 %s 将在端口 %d 上注册（使用提供的监听器）", instanceName, port)
 
+	// 获取用于 mDNS 的网络接口
+	selectedInterfaces, err := getSuitableInterfaces()
+	if err != nil {
+		// 即使获取接口列表失败，也记录警告并尝试使用 nil（让库选择）
+		logger.Log.Warnf("获取特定网络接口失败，将依赖 zeroconf 库的默认选择: %v", err)
+		// selectedInterfaces 将为 nil
+	}
+	// 如果 selectedInterfaces 为空切片但没有错误 (例如 getSuitableInterfaces 返回 nil, nil),
+	// zeroconf.Register 传入 nil 也是其默认行为。
+
 	server, err := zeroconf.Register(
-		instanceName,  // 服务实例名, e.g., "My eClip Instance"
-		serviceType,   // 服务类型, e.g., "_eclip._tcp"
-		DefaultDomain, // 域名, e.g., "local."
-		port,          // 服务端口
-		text,          // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
-		nil,           // 网络接口，nil 表示所有接口
+		instanceName,       // 服务实例名, e.g., "My eClip Instance"
+		serviceType,        // 服务类型, e.g., "_eclip._tcp"
+		DefaultDomain,      // 域名, e.g., "local."
+		port,               // 服务端口
+		text,               // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
+		selectedInterfaces, // 使用选择的或 nil 网络接口
 	)
 	if err != nil {
 		listener.Close() // 如果注册失败，关闭监听器
