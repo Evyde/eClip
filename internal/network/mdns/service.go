@@ -167,9 +167,14 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 	var resolver *zeroconf.Resolver
 	var err error
 
-	// 暂时总是让 zeroconf 自动选择发现接口，以排查问题
-	logger.Log.Debugf("DiscoverServices: 强制使用 zeroconf 默认接口进行发现 (当前interfaces参数被忽略: %v)", interfaces)
-	resolver, err = zeroconf.NewResolver() // 总是使用默认接口
+	if len(interfaces) > 0 {
+		logger.Log.Debugf("DiscoverServices: 使用特定接口进行发现: %v", interfaces)
+		resolver, err = zeroconf.NewResolver(zeroconf.SelectIfaces(interfaces))
+	} else {
+		// 如果没有提供接口，则使用 zeroconf 的默认行为（通常是所有接口）
+		logger.Log.Debugf("DiscoverServices: 未提供特定接口，将使用 zeroconf 默认接口进行发现")
+		resolver, err = zeroconf.NewResolver()
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("无法创建 mDNS 解析器: %w", err)
