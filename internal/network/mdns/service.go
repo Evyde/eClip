@@ -5,23 +5,20 @@ import (
 	"eClip/internal/logger"
 	"fmt"
 	"net"
-	"os"      // 新增导入，用于潜在的 OS 特定逻辑
-	"strings" // 新增导入
+	"os"
+	"strings"
 	"time"
 
-	"github.com/libp2p/zeroconf/v2"
+	"github.com/hashicorp/mdns" // 新的导入路径
 )
 
 const (
-	// DefaultServiceType 是 mDNS 服务的默认类型
 	DefaultServiceType = "_eclip._tcp"
-	// DefaultDomain 是 mDNS 服务的默认域
-	DefaultDomain = "local."
-	// DefaultTimeout 是 mDNS 操作的默认超时时间
-	DefaultTimeout = 10 * time.Second // 恢复为 10 秒
+	DefaultDomain      = "local" // hashicorp/mdns 通常不包含点号
+	DefaultTimeout     = 10 * time.Second
 )
 
-// ServiceInfo 存储了 mDNS 服务的信息
+// ServiceInfo 保持不变，用于向 PeerManager 传递信息
 type ServiceInfo struct {
 	Instance string
 	Service  string
@@ -33,224 +30,190 @@ type ServiceInfo struct {
 	Text     []string
 }
 
-// getSuitableInterfaces 获取用于 mDNS 注册的合适网络接口。
-// 它会选择 UP、支持 MULTICAST 且非 LOOPBACK 的接口。
+// getSuitableInterfaces 函数不再直接用于 hashicorp/mdns 的注册或发现，
+// 因为该库倾向于自动处理接口，或者通过其自身的机制指定。
+// 但我们可以保留它，以防将来需要，或者用于日志记录。
+// 目前，RegisterService 和 DiscoverServices 将让库自动选择接口。
 func getSuitableInterfaces() ([]net.Interface, error) {
-	var suitableInterfaces []net.Interface
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, fmt.Errorf("获取网络接口失败: %w", err)
-	}
-
-	for _, ifi := range interfaces {
-		if (ifi.Flags&net.FlagUp == 0) || (ifi.Flags&net.FlagMulticast == 0) || (ifi.Flags&net.FlagLoopback != 0) {
-			logger.Log.Debugf("跳过不合适的接口: %s, Flags: %s", ifi.Name, ifi.Flags.String())
-			continue
-		}
-
-		// 附加检查：确保接口至少有一个可用的 IP 地址（可选，但推荐）
-		addrs, err := ifi.Addrs()
-		if err != nil {
-			logger.Log.Warnf("无法获取接口 %s 的地址，跳过: %v", ifi.Name, err)
-			continue
-		}
-		if len(addrs) == 0 {
-			logger.Log.Debugf("接口 %s 没有地址，跳过", ifi.Name)
-			continue
-		}
-
-		// 检查是否有有效的 IPv4 或 IPv6 地址 (非仅链接本地)
-		hasValidIP := false
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
-				if ipnet.IP.To4() != nil || ipnet.IP.To16() != nil {
-					hasValidIP = true
-					break
-				}
-			}
-		}
-		if !hasValidIP {
-			logger.Log.Debugf("接口 %s 没有有效的全局单播 IPv4/IPv6 地址，跳过", ifi.Name)
-			continue
-		}
-
-		logger.Log.Debugf("找到合适的接口: %s, Flags: %s, MTU: %d", ifi.Name, ifi.Flags.String(), ifi.MTU)
-		suitableInterfaces = append(suitableInterfaces, ifi)
-	}
-
-	if len(suitableInterfaces) == 0 {
-		// 如果没有找到合适的接口，返回 nil，让 zeroconf 库决定使用哪些接口（通常是所有接口）
-		// 这在某些虚拟化环境中可能是必要的，或者如果上述过滤过于严格
-		logger.Log.Warnf("未找到符合特定条件的网络接口。将依赖 zeroconf 库的默认接口选择。")
-		return nil, nil
-	}
-
-	selectedInterfaceNames := make([]string, len(suitableInterfaces))
-	for i, ifi := range suitableInterfaces {
-		selectedInterfaceNames[i] = ifi.Name
-	}
-	logger.Log.Infof("为 mDNS 选择的特定网络接口: %v", selectedInterfaceNames)
-	return suitableInterfaces, nil
+	// ... (原有实现可以保留，但当前不会被核心逻辑调用) ...
+	// 为了简洁，暂时注释掉其内容，如果需要再恢复
+	logger.Log.Debugf("getSuitableInterfaces: 当前未使用，hashicorp/mdns 将自动选择接口。")
+	return nil, nil
 }
 
-// RegisterService 注册一个新的 mDNS 服务，并使用动态端口
-// 它返回 zeroconf 服务器、服务信息、创建的监听器、选择的网络接口和错误
-func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*zeroconf.Server, *ServiceInfo, net.Listener, []net.Interface, error) {
-	if serviceType == "" {
-		serviceType = DefaultServiceType
+// RegisterService 使用 hashicorp/mdns 注册服务
+// 返回值调整：第一个返回值是 *mdns.Server
+func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*mdns.Server, *ServiceInfo, net.Listener, []net.Interface, error) {
+	if !strings.HasSuffix(serviceType, ".") {
+		serviceType += "." //确保服务类型以点结尾，例如 "_eclip._tcp."
+	}
+	if !strings.HasSuffix(DefaultDomain, ".") {
+		// hashicorp/mdns 的示例通常不包含尾随点，但标准 DNS-SD 服务类型通常包含
+		// 为了与 ServiceEntry.Name 的格式匹配，这里保持不加点，让库处理
 	}
 
-	hostname, err := os.Hostname()
-
+	host, err := os.Hostname()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
-	sanitizedHostName := strings.TrimSuffix(hostname, DefaultDomain)
-	sanitizedHostName = strings.TrimSuffix(sanitizedHostName, ".local")
+	// hashicorp/mdns 要求 HostName 以 ".local." 结尾
+	if !strings.HasSuffix(host, ".local.") {
+		host = strings.TrimSuffix(host, ".")      //移除可能存在的单个点
+		host = strings.TrimSuffix(host, ".local") // 移除可能存在的.local
+		host += ".local."
+	}
 
-	// 创建一个监听器以获取动态端口
-	listener, err := net.Listen("tcp", ":0") // ":0" 表示动态分配端口
+	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("无法创建监听器以获取动态端口: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("无法创建监听器: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	// 不要在这里关闭监听器；它将被返回并由调用者（或 ClipboardServer）使用
-	// defer listener.Close() // 调用者负责关闭监听器
 
-	logger.Log.Infof("服务 %s 将在端口 %d 上注册（使用提供的监听器）", instanceName, port)
+	logger.Log.Infof("服务 %s 将在端口 %d 上注册", instanceName, port)
 
-	// 让库自动选择网络接口进行注册
-	logger.Log.Infof("RegisterService: 将让 zeroconf 库自动选择注册接口。")
-	server, err := zeroconf.Register(
-		instanceName,  // 服务实例名, e.g., "My eClip Instance"
-		serviceType,   // 服务类型, e.g., "_eclip._tcp"
-		DefaultDomain, // 域名, e.g., "local."
-		port,          // 服务端口
-		text,          // 服务的附加 TXT 记录, e.g., []string{"version=1.0"}
-		nil,           // 总是传递 nil，让库自动选择接口
-	)
+	service, err := mdns.NewMDNSService(instanceName, serviceType, DefaultDomain+".", "", port, nil, text)
 	if err != nil {
-		listener.Close() // 如果注册失败，关闭监听器
-		return nil, nil, nil, nil, fmt.Errorf("无法注册 mDNS 服务: %w", err)
+		listener.Close()
+		return nil, nil, nil, nil, fmt.Errorf("创建 mDNS 服务失败: %w", err)
+	}
+	service.HostName = host // 明确设置主机名
+
+	// 创建 mDNS 服务器。传递 nil 作为接口，让库自动选择。
+	server, err := mdns.NewServer(&mdns.Config{Zone: service, Iface: nil})
+	if err != nil {
+		listener.Close()
+		return nil, nil, nil, nil, fmt.Errorf("创建 mDNS 服务器失败: %w", err)
 	}
 
-	serviceInfo := &ServiceInfo{
+	appServiceInfo := &ServiceInfo{
 		Instance: instanceName,
-		Service:  serviceType,
-		Domain:   DefaultDomain,
-		HostName: sanitizedHostName, // 通常实例名可以作为主机名，或者从 os.Hostname() 获取更精确的
+		Service:  serviceType,                   // e.g., _eclip._tcp.
+		Domain:   DefaultDomain + ".",           // e.g., local.
+		HostName: strings.TrimSuffix(host, "."), // User-facing hostname without trailing dot
 		Port:     port,
 		Text:     text,
 	}
 
-	logger.Log.Printf("mDNS 服务已注册: %s.%s %s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain, serviceInfo.HostName, port)
-	// 由于我们不再选择接口，返回 nil 作为接口列表
-	return server, serviceInfo, listener, nil, nil
+	logger.Log.Printf("mDNS 服务已注册: %s.%s%s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain+".", appServiceInfo.HostName, port)
+	// 第四个返回值 []net.Interface 现在为 nil，因为库自动处理接口
+	return server, appServiceInfo, listener, nil, nil
 }
 
-// DiscoverServices 发现指定类型的 mDNS 服务，并排除本地服务实例
-// interfaces 参数指定用于发现的网络接口，如果为 nil，则使用默认接口
+// DiscoverServices 使用 hashicorp/mdns 发现服务
 func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo *ServiceInfo, interfaces []net.Interface) ([]*ServiceInfo, error) {
-	if serviceType == "" {
-		serviceType = DefaultServiceType
+	if !strings.HasSuffix(serviceType, ".") {
+		serviceType += "."
 	}
 
-	entries := make(chan *zeroconf.ServiceEntry) // Create channel to pass to Browse
+	entriesChan := make(chan *mdns.ServiceEntry, 10) // Buffer a bit
 	discoveredServices := []*ServiceInfo{}
 
 	discoveryCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
+	// Defer closing entriesChan to ensure the reading goroutine terminates.
+	// This is important if Lookup/Query doesn't close it on context cancellation.
+	defer close(entriesChan)
 
-	// Prepare ClientOption. Since 'interfaces' will be nil (as RegisterService returns nil for it),
-	// browseOpts will be empty, and the library will auto-select interfaces.
-	var browseOpts []zeroconf.ClientOption
-	if len(interfaces) > 0 {
-		// This branch is not expected to be taken with current RegisterService implementation
-		logger.Log.Debugf("DiscoverServices: 准备使用特定接口进行浏览: %v", interfaces)
-		browseOpts = append(browseOpts, zeroconf.SelectIfaces(interfaces))
-	} else {
-		logger.Log.Infof("DiscoverServices: 将让 zeroconf 库自动选择发现接口。")
-	}
-
-	// Goroutine to collect entries from the channel
 	go func() {
-		for entry := range entries {
-			logger.Log.Debugf("DiscoverServices: 收到服务条目: %s", entry)
+		for entry := range entriesChan {
+			logger.Log.Debugf("DiscoverServices: 收到服务条目: Name:%s, Host:%s, Port:%d, AddrV4:%s, InfoFields:%v",
+				entry.Name, entry.Host, entry.Port, entry.AddrV4, entry.InfoFields)
 
-			// 检查是否是本地服务实例
-			// 我们需要确保 localServiceInfo 不为 nil，并且其 Instance 和 Port 已被正确设置
-			// 通过比较实例名和端口来确保只排除完全相同的服务实例
-			if localServiceInfo != nil && entry.Text[2] == localServiceInfo.Text[2] && entry.Port == localServiceInfo.Port {
-				logger.Log.Printf("忽略具有相同UUID和端口的服务实例: %s (%s:%d)", entry.Text[2], entry.HostName, entry.Port)
-				continue // 跳过完全相同的本地实例
+			// 从 entry.Name (e.g., "MyInstance._eclip._tcp.local.") 中提取实例名
+			// entry.Service (e.g., "_eclip._tcp.local.")
+			// entry.Domain (e.g., "local.")
+
+			instanceFromName := strings.TrimSuffix(entry.Name, "."+serviceType+DefaultDomain+".")
+
+			// 过滤自身服务
+			// hashicorp/mdns 的 ServiceEntry.InfoFields 是解析后的 TXT 记录 []string{"key=value"}
+			// 我们需要找到 id=UUID
+			var entryUUID string
+			for _, txt := range entry.InfoFields {
+				if strings.HasPrefix(txt, "id=") {
+					entryUUID = strings.TrimPrefix(txt, "id=")
+					break
+				}
 			}
-
-			if localServiceInfo != nil && entry.Instance != localServiceInfo.Instance {
-				logger.Log.Printf("忽略别人的服务实例: [%s]-x-[%s]", entry.Instance, localServiceInfo.Instance)
-				continue // 跳过完全相同的本地实例
-			}
-
-			sanitizedHostName := entry.HostName
-			// 清理主机名：如果 entry.HostName 以 entry.Domain 结尾，
-			// 并且移除该后缀后的字符串仍然以 entry.Domain 结尾，
-			// 说明原始主机名包含了重复的域名，例如 "host.local.local."。
-			// 这种情况下，我们使用移除一次后缀后的结果 "host.local."。
-			if entry.Domain != "" && strings.HasSuffix(entry.HostName, entry.Domain) {
-				tempHostName := strings.TrimSuffix(entry.HostName, entry.Domain)
-				// 确保 tempHostName 不是空字符串，并且在移除第一个域名后，剩余部分仍然以域名结尾
-				// 例如：HostName="host.local.local.", Domain="local." -> tempHostName="host.local."
-				//       strings.HasSuffix("host.local.", "local.") is true.
-				// 例如：HostName="host.local.", Domain="local." -> tempHostName="host."
-				//       strings.HasSuffix("host.", "local.") is false.
-				if tempHostName != "" && strings.HasSuffix(tempHostName, entry.Domain) {
-					sanitizedHostName = tempHostName
+			localUUID := ""
+			if localServiceInfo != nil && len(localServiceInfo.Text) > 2 {
+				if strings.HasPrefix(localServiceInfo.Text[2], "id=") {
+					localUUID = strings.TrimPrefix(localServiceInfo.Text[2], "id=")
 				}
 			}
 
-			logger.Log.Printf("发现服务: 实例: %s, 服务: %s, 域: %s, 主机: %s (原始: %s), 端口: %d, IPv4: %v, IPv6: %v, TXT: %v\n",
-				entry.Instance, entry.Service, entry.Domain, sanitizedHostName, entry.HostName, entry.Port, entry.AddrIPv4, entry.AddrIPv6, entry.Text)
-			discoveredServices = append(discoveredServices, &ServiceInfo{
-				Instance: entry.Instance,
-				Service:  entry.Service,
-				Domain:   entry.Domain,
-				HostName: sanitizedHostName, // 使用清理后的主机名
-				Port:     entry.Port,
-				AddrIPv4: entry.AddrIPv4,
-				AddrIPv6: entry.AddrIPv6,
-				Text:     entry.Text,
-			})
-		}
-		logger.Log.Printf("服务发现协程结束.")
-	}() // End of goroutine
+			if localServiceInfo != nil && entryUUID != "" && localUUID == entryUUID && entry.Port == localServiceInfo.Port {
+				logger.Log.Printf("忽略具有相同UUID (%s) 和端口 (%d) 的服务实例: %s", entryUUID, entry.Port, entry.Name)
+				continue
+			}
 
-	// Call package-level Browse, passing the entries channel
-	err := zeroconf.Browse(discoveryCtx, serviceType, DefaultDomain, entries, browseOpts...)
-	if err != nil {
-		// This error is typically if the browse could not be initiated,
-		// or if the context is canceled before browsing effectively starts.
-		// If context is canceled during browsing, Browse itself might return ctx.Err().
-		// The original grandcat/zeroconf resolver.Browse() would block and only return error on setup.
-		// libp2p/zeroconf's Browse also blocks until context is canceled or an error occurs.
-		// So, an error here means browsing didn't proceed as expected or was interrupted.
-		// We should close the entries channel to terminate the goroutine if Browse fails to start.
-		close(entries)
-		// Check if the error is due to context cancellation, which is an expected way to stop browsing.
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			logger.Log.Debugf("DiscoverServices: 浏览因上下文取消/超时而停止: %v", err)
-			// This is not a "failure" in the sense of setup, but a normal termination.
-			// We still need to wait for the goroutine to finish processing any last entries.
-		} else {
-			return nil, fmt.Errorf("浏览 mDNS 服务失败: %w", err)
+			// 过滤不同实例名的服务 (如果我们的应用逻辑需要)
+			// localServiceInfo.Instance 是我们应用定义的实例名 (e.g., "Evyde")
+			// instanceFromName 是从网络发现的实例名
+			if localServiceInfo != nil && instanceFromName != localServiceInfo.Instance {
+				logger.Log.Printf("忽略实例名不匹配的服务: 本地='%s', 发现的='%s' (来自 %s)", localServiceInfo.Instance, instanceFromName, entry.Name)
+				continue
+			}
+
+			var addrsV4 []net.IP
+			if entry.AddrV4 != nil {
+				addrsV4 = append(addrsV4, entry.AddrV4)
+			}
+			var addrsV6 []net.IP
+			if entry.AddrV6 != nil {
+				addrsV6 = append(addrsV6, entry.AddrV6)
+			}
+
+			// 将 mdns.ServiceEntry 转换为我们自己的 ServiceInfo
+			appServiceInfo := &ServiceInfo{
+				Instance: instanceFromName,
+				Service:  serviceType,
+				Domain:   DefaultDomain + ".",
+				HostName: strings.TrimSuffix(entry.Host, "."), // Remove trailing dot for consistency
+				Port:     entry.Port,
+				AddrIPv4: addrsV4,
+				AddrIPv6: addrsV6,
+				Text:     entry.InfoFields, // 使用解析后的TXT记录
+			}
+			discoveredServices = append(discoveredServices, appServiceInfo)
+			logger.Log.Printf("处理发现的服务: %#v", appServiceInfo)
 		}
+		logger.Log.Printf("服务发现协程 (读取entriesChan) 结束.")
+	}()
+
+	queryParams := &mdns.QueryParam{
+		Service:     serviceType,
+		Domain:      DefaultDomain,
+		Timeout:     DefaultTimeout, // Timeout for the mdns.Query operation
+		Entries:     entriesChan,
+		DisableIPv6: true, // 禁用 IPv6 进行测试
+		// Interface: nil, // Let library choose interface automatically
 	}
 
+	logger.Log.Infof("DiscoverServices: 开始查询服务类型 '%s' 在域 '%s' (IPv6已禁用)，库超时 %v", queryParams.Service, queryParams.Domain, queryParams.Timeout)
+
+	// mdns.Query will block until queryParams.Timeout, or until queryParams.Entries is closed,
+	// or until queryParams.Context (if set, but it's not a field) is canceled.
+	// Since QueryParam doesn't take a context for cancellation of Query itself,
+	// we rely on its Timeout field. The outer discoveryCtx is for the overall DiscoverServices operation.
+
+	err := mdns.Query(queryParams) // This is a blocking call
+	if err != nil {
+		// An error from Query usually means setup problems or that the query was interrupted (e.g., by closing Entries).
+		// If it's a timeout, it might return a specific error or just complete.
+		// The hashicorp/mdns Query func doesn't explicitly return context.DeadlineExceeded on its own timeout.
+		// It simply stops sending to Entries and returns nil if its timeout is reached.
+		// If Entries is closed by our defer, Query might return an error.
+		logger.Log.Warnf("mdns.Query 完成，可能伴有错误/超时: %v", err)
+	} else {
+		logger.Log.Debugf("mdns.Query 成功完成 (可能因超时).")
+	}
+
+	// discoveryCtx ensures that DiscoverServices itself times out.
+	// The reading goroutine will terminate when entriesChan is closed by the defer statement
+	// after discoveryCtx is done.
 	<-discoveryCtx.Done()
-	logger.Log.Debugf("DiscoverServices: discoveryCtx 完成, 浏览超时或被取消.")
-	// Ensure the goroutine has a chance to exit if entries channel was not closed by Browse itself.
-	// However, if Browse returns (due to ctx.Done or other error), it should have stopped sending to entries.
-	// If Browse returns nil error, it means it exited because ctx was Done.
-	// If Browse returns an error, we closed entries.
-	// The goroutine will terminate when 'entries' is closed and all items are processed.
+	logger.Log.Debugf("DiscoverServices: discoveryCtx 完成 (%v超时), 确保所有处理结束.", DefaultTimeout)
 
 	return discoveredServices, nil
 }
