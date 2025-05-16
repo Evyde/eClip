@@ -41,26 +41,67 @@ func getSuitableInterfaces() ([]net.Interface, error) {
 	return nil, nil
 }
 
+// getActiveIPv4s 获取本机所有活动的、非环回的 IPv4 地址
+func getActiveIPv4s() []net.IP {
+	var activeIPs []net.IP
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		logger.Log.Errorf("getActiveIPv4s: 获取网络接口失败: %v", err)
+		return nil
+	}
+
+	for _, i := range ifaces {
+		if (i.Flags&net.FlagUp == 0) || (i.Flags&net.FlagLoopback != 0) {
+			continue // 接口未激活或是环回接口
+		}
+		addrs, err := i.Addrs()
+		if err != nil {
+			logger.Log.Warnf("getActiveIPv4s: 无法获取接口 %s 的地址: %v", i.Name, err)
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ipv4 := ip.To4()
+			if ipv4 == nil {
+				continue // 不是 IPv4 地址
+			}
+			activeIPs = append(activeIPs, ipv4)
+		}
+	}
+	if len(activeIPs) == 0 {
+		logger.Log.Warnf("getActiveIPv4s: 未找到活动的 IPv4 地址。")
+		return nil
+	}
+	logger.Log.Debugf("getActiveIPv4s: 找到的活动 IPv4 地址: %v", activeIPs)
+	return activeIPs
+}
+
 // RegisterService 使用 hashicorp/mdns 注册服务
 // 返回值调整：第一个返回值是 *mdns.Server
 func RegisterService(ctx context.Context, instanceName string, serviceType string, text []string) (*mdns.Server, *ServiceInfo, net.Listener, []net.Interface, error) {
 	if !strings.HasSuffix(serviceType, ".") {
 		serviceType += "." //确保服务类型以点结尾，例如 "_eclip._tcp."
 	}
-	if !strings.HasSuffix(DefaultDomain, ".") {
-		// hashicorp/mdns 的示例通常不包含尾随点，但标准 DNS-SD 服务类型通常包含
-		// 为了与 ServiceEntry.Name 的格式匹配，这里保持不加点，让库处理
-	}
 
-	host, err := os.Hostname()
+	// 使用 os.Hostname() 作为基础主机名，并确保其格式正确
+	rawHost, err := os.Hostname()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("无法获取主机名: %w", err)
 	}
-	// hashicorp/mdns 要求 HostName 以 ".local." 结尾
-	if !strings.HasSuffix(host, ".local.") {
-		host = strings.TrimSuffix(host, ".")      //移除可能存在的单个点
-		host = strings.TrimSuffix(host, ".local") // 移除可能存在的.local
-		host += ".local."
+	mdnsHostName := rawHost
+	if !strings.HasSuffix(mdnsHostName, ".local.") {
+		mdnsHostName = strings.TrimSuffix(mdnsHostName, ".")
+		mdnsHostName = strings.TrimSuffix(mdnsHostName, ".local")
+		mdnsHostName += ".local."
 	}
 
 	listener, err := net.Listen("tcp", ":0")
@@ -71,15 +112,31 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 
 	logger.Log.Infof("服务 %s 将在端口 %d 上注册", instanceName, port)
 
-	service, err := mdns.NewMDNSService(instanceName, serviceType, DefaultDomain+".", "", port, nil, text)
+	activeIPv4s := getActiveIPv4s()
+	if len(activeIPv4s) == 0 {
+		listener.Close()
+		return nil, nil, nil, nil, fmt.Errorf("未能获取任何活动的IPv4地址用于mDNS注册")
+	}
+
+	// 为服务提供明确的IPv4地址，并将host参数留空，让库使用提供的IPs
+	// 或者，可以提供mdnsHostName，并同时提供activeIPv4s。
+	// 根据hashicorp/mdns文档，如果HostName字段非空，则优先使用HostName。
+	// 我们希望它通告我们的主机名，并使用我们提供的IPs进行解析。
+	service, err := mdns.NewMDNSService(instanceName, serviceType, DefaultDomain+".", mdnsHostName, port, activeIPv4s, text)
 	if err != nil {
 		listener.Close()
 		return nil, nil, nil, nil, fmt.Errorf("创建 mDNS 服务失败: %w", err)
 	}
-	service.HostName = host // 明确设置主机名
+	// service.HostName 字段已被 NewMDNSService 设置为 mdnsHostName
+	// service.IPs 字段已被 NewMDNSService 设置为 activeIPv4s
+	// 我们通过仅向 NewMDNSService 提供 IPv4 地址来暗示仅 IPv4 通告。
+	// 不再需要 service.AddrIPv6 = nil，因为该字段可能不存在或已废弃。
 
 	// 创建 mDNS 服务器。传递 nil 作为接口，让库自动选择。
-	server, err := mdns.NewServer(&mdns.Config{Zone: service, Iface: nil})
+	// Config 中可以指定 Zone (MDNSService) 和 Iface (*net.Interface)
+	// Iface: nil 表示在所有可用接口上操作
+	serverConfig := &mdns.Config{Zone: service, Iface: nil}
+	server, err := mdns.NewServer(serverConfig)
 	if err != nil {
 		listener.Close()
 		return nil, nil, nil, nil, fmt.Errorf("创建 mDNS 服务器失败: %w", err)
@@ -87,14 +144,14 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 
 	appServiceInfo := &ServiceInfo{
 		Instance: instanceName,
-		Service:  serviceType,                   // e.g., _eclip._tcp.
-		Domain:   DefaultDomain + ".",           // e.g., local.
-		HostName: strings.TrimSuffix(host, "."), // User-facing hostname without trailing dot
+		Service:  serviceType,         // e.g., _eclip._tcp.
+		Domain:   DefaultDomain + ".", // e.g., local.
+		HostName: rawHost,             // 使用原始主机名以方便用户查看
 		Port:     port,
 		Text:     text,
 	}
 
-	logger.Log.Printf("mDNS 服务已注册: %s.%s%s, 主机: %s, 端口: %d", instanceName, serviceType, DefaultDomain+".", appServiceInfo.HostName, port)
+	logger.Log.Printf("mDNS 服务已注册: %s.%s%s, 主机: %s (mDNS Host: %s), 端口: %d", instanceName, serviceType, DefaultDomain+".", appServiceInfo.HostName, mdnsHostName, port)
 	// 第四个返回值 []net.Interface 现在为 nil，因为库自动处理接口
 	return server, appServiceInfo, listener, nil, nil
 }
