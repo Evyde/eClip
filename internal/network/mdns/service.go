@@ -18,7 +18,7 @@ const (
 	// DefaultDomain 是 mDNS 服务的默认域
 	DefaultDomain = "local."
 	// DefaultTimeout 是 mDNS 操作的默认超时时间
-	DefaultTimeout = 2 * time.Second // 设置为 60 秒
+	DefaultTimeout = 10 * time.Second // 恢复为 10 秒
 )
 
 // ServiceInfo 存储了 mDNS 服务的信息
@@ -155,28 +155,26 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 		serviceType = DefaultServiceType
 	}
 
-	// 使用新的 zeroconf.Browse API
-	entries := make(chan *zeroconf.ServiceEntry)
+	entries := make(chan *zeroconf.ServiceEntry) // Create channel to pass to Browse
 	discoveredServices := []*ServiceInfo{}
 
 	discoveryCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
 
-	// 准备 ClientOption，如果需要传递特定接口的话
-	// 由于 RegisterService 现在返回 nil 接口，并且我们倾向于让库自动选择，
-	// 这里的 interfaces 参数也将是 nil。
-	// 因此，我们将不传递 opts 给 Browse，让其使用默认接口。
+	// Prepare ClientOption. Since 'interfaces' will be nil (as RegisterService returns nil for it),
+	// browseOpts will be empty, and the library will auto-select interfaces.
 	var browseOpts []zeroconf.ClientOption
 	if len(interfaces) > 0 {
-		// 这个分支实际上不会被走到，因为 interfaces 总是 nil
+		// This branch is not expected to be taken with current RegisterService implementation
 		logger.Log.Debugf("DiscoverServices: 准备使用特定接口进行浏览: %v", interfaces)
 		browseOpts = append(browseOpts, zeroconf.SelectIfaces(interfaces))
 	} else {
 		logger.Log.Infof("DiscoverServices: 将让 zeroconf 库自动选择发现接口。")
 	}
 
-	go func(results <-chan *zeroconf.ServiceEntry) {
-		for entry := range results {
+	// Goroutine to collect entries from the channel
+	go func() {
+		for entry := range entries {
 			logger.Log.Debugf("DiscoverServices: 收到服务条目: %s", entry)
 
 			// 检查是否是本地服务实例
@@ -223,26 +221,36 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 			})
 		}
 		logger.Log.Printf("服务发现协程结束.")
-	}(entries)
+	}() // End of goroutine
 
-	logger.Log.Infof("DiscoverServices: 开始浏览服务类型: %s.%s", serviceType, DefaultDomain)
-	// 直接调用包级别的 Browse 函数
+	// Call package-level Browse, passing the entries channel
 	err := zeroconf.Browse(discoveryCtx, serviceType, DefaultDomain, entries, browseOpts...)
 	if err != nil {
-		// 注意：如果 Browse 因为 ctx.Done() 而返回，它可能会返回一个错误，例如 context.Canceled。
-		// 我们需要区分是真正的浏览启动失败，还是因为超时/取消而正常结束。
-		// 然而，zeroconf.Browse 的文档说它 "blocks until the context is canceled (or an error occurs)"
-		// 所以这里的错误通常是启动错误。
-		return nil, fmt.Errorf("浏览 mDNS 服务失败: %w", err)
+		// This error is typically if the browse could not be initiated,
+		// or if the context is canceled before browsing effectively starts.
+		// If context is canceled during browsing, Browse itself might return ctx.Err().
+		// The original grandcat/zeroconf resolver.Browse() would block and only return error on setup.
+		// libp2p/zeroconf's Browse also blocks until context is canceled or an error occurs.
+		// So, an error here means browsing didn't proceed as expected or was interrupted.
+		// We should close the entries channel to terminate the goroutine if Browse fails to start.
+		close(entries)
+		// Check if the error is due to context cancellation, which is an expected way to stop browsing.
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			logger.Log.Debugf("DiscoverServices: 浏览因上下文取消/超时而停止: %v", err)
+			// This is not a "failure" in the sense of setup, but a normal termination.
+			// We still need to wait for the goroutine to finish processing any last entries.
+		} else {
+			return nil, fmt.Errorf("浏览 mDNS 服务失败: %w", err)
+		}
 	}
-	// Browse 函数会阻塞直到 discoveryCtx 被取消 (例如超时)
-	// 或者发生其他错误导致它返回。
-	// 当 Browse 返回时，通常意味着发现周期结束或出错。
-	// 我们已经在 goroutine 中处理 entries，并在 discoveryCtx.Done() 后返回。
-	// 这里的 <-discoveryCtx.Done() 是为了确保函数在超时或取消后才返回。
 
 	<-discoveryCtx.Done()
-	logger.Log.Debugf("DiscoverServices: discoveryCtx 完成.")
+	logger.Log.Debugf("DiscoverServices: discoveryCtx 完成, 浏览超时或被取消.")
+	// Ensure the goroutine has a chance to exit if entries channel was not closed by Browse itself.
+	// However, if Browse returns (due to ctx.Done or other error), it should have stopped sending to entries.
+	// If Browse returns nil error, it means it exited because ctx was Done.
+	// If Browse returns an error, we closed entries.
+	// The goroutine will terminate when 'entries' is closed and all items are processed.
 
 	return discoveredServices, nil
 }
