@@ -41,9 +41,9 @@ func getSuitableInterfaces() ([]net.Interface, error) {
 	return nil, nil
 }
 
-// getActiveIPv4s 获取本机所有活动的、非环回的 IPv4 地址
+// getActiveIPv4s 获取本机所有活动的、RFC1918私有且非环回的 IPv4 地址
 func getActiveIPv4s() []net.IP {
-	var activeIPs []net.IP
+	var privateIPs []net.IP
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		logger.Log.Errorf("getActiveIPv4s: 获取网络接口失败: %v", err)
@@ -51,8 +51,9 @@ func getActiveIPv4s() []net.IP {
 	}
 
 	for _, i := range ifaces {
-		if (i.Flags&net.FlagUp == 0) || (i.Flags&net.FlagLoopback != 0) {
-			continue // 接口未激活或是环回接口
+		// 只考虑激活的、支持多播的、非环回的接口
+		if (i.Flags&net.FlagUp == 0) || (i.Flags&net.FlagMulticast == 0) || (i.Flags&net.FlagLoopback != 0) {
+			continue
 		}
 		addrs, err := i.Addrs()
 		if err != nil {
@@ -74,15 +75,21 @@ func getActiveIPv4s() []net.IP {
 			if ipv4 == nil {
 				continue // 不是 IPv4 地址
 			}
-			activeIPs = append(activeIPs, ipv4)
+			if !ipv4.IsPrivate() { // 检查是否是 RFC1918 私有地址
+				logger.Log.Debugf("getActiveIPv4s: 跳过非私有 IPv4 地址 %s (接口 %s)", ipv4.String(), i.Name)
+				continue
+			}
+			privateIPs = append(privateIPs, ipv4)
 		}
 	}
-	if len(activeIPs) == 0 {
-		logger.Log.Warnf("getActiveIPv4s: 未找到活动的 IPv4 地址。")
+	if len(privateIPs) == 0 {
+		logger.Log.Warnf("getActiveIPv4s: 未找到活动的 RFC1918 私有 IPv4 地址。")
+		// 作为后备，可以考虑返回所有非环回IPv4，但mDNS在非私有网络中行为可能不确定
+		// 为简单起见，这里只返回找到的私有IP，如果没有则返回nil
 		return nil
 	}
-	logger.Log.Debugf("getActiveIPv4s: 找到的活动 IPv4 地址: %v", activeIPs)
-	return activeIPs
+	logger.Log.Debugf("getActiveIPv4s: 找到的活动 RFC1918 私有 IPv4 地址: %v", privateIPs)
+	return privateIPs
 }
 
 // RegisterService 使用 hashicorp/mdns 注册服务
