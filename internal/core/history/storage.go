@@ -40,9 +40,9 @@ func NewStorage(capacity int, log *logger.AsyncLogger) (*Storage, error) {
 }
 
 // AddItem adds a new clipboard item to the history.
-func (s *Storage) AddItem(item clipboard.ClipItem) {
+func (s *Storage) AddItem(item clipboard.Item) {
 	if item.ID == "" {
-		s.logger.Warnf("Attempted to add ClipItem with empty ID. Item: %+v", item)
+		s.logger.Warnf("Attempted to add Item with empty ID. Item: %+v", item)
 		// Potentially generate an ID here if it's missing, or reject.
 		// For now, we rely on the caller to provide a valid ID.
 		// If IDs are generated based on content hash, this check is crucial.
@@ -53,7 +53,7 @@ func (s *Storage) AddItem(item clipboard.ClipItem) {
 }
 
 // GetItem retrieves a specific item from history by its ID.
-func (s *Storage) GetItem(id string) (clipboard.ClipItem, bool) {
+func (s *Storage) GetItem(id string) (clipboard.Item, bool) {
 	item, found := s.cache.Get(id)
 	if found {
 		s.logger.Debugf("Retrieved item from history: %s", id)
@@ -65,7 +65,7 @@ func (s *Storage) GetItem(id string) (clipboard.ClipItem, bool) {
 
 // GetAllItems retrieves all items currently in the history,
 // ordered from most to least recently used.
-func (s *Storage) GetAllItems() []clipboard.ClipItem {
+func (s *Storage) GetAllItems() []clipboard.Item {
 	items := s.cache.GetAll()
 	s.logger.Debugf("Retrieved all %d items from history", len(items))
 	return items

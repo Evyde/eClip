@@ -9,17 +9,17 @@ import (
 )
 
 // CacheItem holds the key and value for an item in the cache list.
-// We store the full ClipItem as the value.
+// We store the full Item as the value.
 type CacheItem struct {
-	key   string // ClipItem ID (unique identifier)
-	value clipboard.ClipItem
+	key   string // Item ID (unique identifier)
+	value clipboard.Item
 }
 
-// LRUCache implements a thread-safe fixed-size LRU cache for ClipItems.
+// LRUCache implements a thread-safe fixed-size LRU cache for Items.
 type LRUCache struct {
 	size      int
 	evictList *list.List               // Doubly linked list to track usage order (front is most recent)
-	items     map[string]*list.Element // Map for quick access to list elements by ClipItem ID
+	items     map[string]*list.Element // Map for quick access to list elements by Item ID
 	mu        sync.RWMutex             // Mutex for thread safety
 }
 
@@ -35,14 +35,14 @@ func NewLRUCache(size int) (*LRUCache, error) {
 	}, nil
 }
 
-// Add adds a ClipItem to the cache. If the item (identified by its ID) already exists,
+// Add adds an Item to the cache. If the item (identified by its ID) already exists,
 // it updates the value and moves the item to the front (most recently used).
 // If the cache is full, it evicts the least recently used item before adding the new one.
-func (c *LRUCache) Add(item clipboard.ClipItem) {
+func (c *LRUCache) Add(item clipboard.Item) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := item.ID // Use ClipItem's ID as the key
+	key := item.ID // Use Item's ID as the key
 
 	// Check if item already exists
 	if element, ok := c.items[key]; ok {
@@ -63,10 +63,10 @@ func (c *LRUCache) Add(item clipboard.ClipItem) {
 	}
 }
 
-// Get retrieves a ClipItem from the cache by its ID.
+// Get retrieves an Item from the cache by its ID.
 // Returns the item and true if found, otherwise nil and false.
 // Moves the accessed item to the front of the list.
-func (c *LRUCache) Get(key string) (clipboard.ClipItem, bool) {
+func (c *LRUCache) Get(key string) (clipboard.Item, bool) {
 	c.mu.Lock() // Use Lock as we might modify the list order
 	defer c.mu.Unlock()
 
@@ -75,16 +75,16 @@ func (c *LRUCache) Get(key string) (clipboard.ClipItem, bool) {
 		// Return a copy to prevent external modification? For now, return direct reference.
 		return element.Value.(*CacheItem).value, true
 	}
-	// Return zero value of ClipItem if not found
-	return clipboard.ClipItem{}, false
+	// Return zero value of Item if not found
+	return clipboard.Item{}, false
 }
 
 // GetAll retrieves all items currently in the cache, ordered from most to least recently used.
-func (c *LRUCache) GetAll() []clipboard.ClipItem {
+func (c *LRUCache) GetAll() []clipboard.Item {
 	c.mu.RLock() // Read lock is sufficient
 	defer c.mu.RUnlock()
 
-	items := make([]clipboard.ClipItem, 0, c.evictList.Len())
+	items := make([]clipboard.Item, 0, c.evictList.Len())
 	for element := c.evictList.Front(); element != nil; element = element.Next() {
 		items = append(items, element.Value.(*CacheItem).value)
 	}

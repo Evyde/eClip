@@ -13,6 +13,8 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.design/x/clipboard"
+
 	"github.com/google/uuid" // Using UUID for unique IDs
 	"golang.org/x/sys/windows"
 )
@@ -78,8 +80,35 @@ func closeClipboard() error {
 	return nil
 }
 
-// ReadText reads text from the Windows clipboard.
-func (m *windowsClipboardManager) ReadText(ctx context.Context) (string, error) {
+// GetText retrieves text from clipboard. This method implements the Manager interface.
+func (m *windowsClipboardManager) GetText() (string, error) {
+	// This implementation uses the golang.design/x/clipboard library
+	// as it's simpler and less prone to manual winapi call errors.
+	// The original ReadText can be kept for reference or specific low-level needs.
+	text, err := windowsGetClipboardText()
+	if err != nil {
+		return "", fmt.Errorf("GetText (windows): %w", err)
+	}
+	return text, nil
+}
+
+// SetText sets text to clipboard. This method implements the Manager interface.
+func (m *windowsClipboardManager) SetText(text string, source string) error {
+	// source string is part of the interface but not directly used here for Windows API
+	// This implementation uses the golang.design/x/clipboard library.
+	err := windowsSetClipboardText(text)
+	if err != nil {
+		return fmt.Errorf("SetText (windows): %w", err)
+	}
+	// Update last known hash after writing
+	newHash := calculateHash([]byte(text)) // Hash the original UTF-8 text
+	m.lastContentHash = newHash
+	return nil
+}
+
+// ReadText reads text from the Windows clipboard using direct API calls.
+// This is kept for reference or if direct API access is preferred over the library.
+func (m *windowsClipboardManager) ReadTextDirect(ctx context.Context) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -87,7 +116,7 @@ func (m *windowsClipboardManager) ReadText(ctx context.Context) (string, error) 
 	}
 
 	if err := openClipboard(); err != nil {
-		return "", fmt.Errorf("ReadText: %w", err)
+		return "", fmt.Errorf("ReadTextDirect: %w", err)
 	}
 	defer closeClipboard()
 
@@ -116,8 +145,9 @@ func (m *windowsClipboardManager) ReadText(ctx context.Context) (string, error) 
 	return text, nil
 }
 
-// WriteText writes text to the Windows clipboard.
-func (m *windowsClipboardManager) WriteText(ctx context.Context, text string, source string) error {
+// WriteTextDirect writes text to the Windows clipboard using direct API calls.
+// This is kept for reference or if direct API access is preferred over the library.
+func (m *windowsClipboardManager) WriteTextDirect(ctx context.Context, text string, source string) error {
 	// source string is part of the interface but not directly used here for Windows API
 	select {
 	case <-ctx.Done():
@@ -210,8 +240,8 @@ func (m *windowsClipboardManager) WriteFiles(ctx context.Context, filePaths []st
 }
 
 // Monitor starts polling the clipboard for changes on Windows.
-func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Duration) (<-chan ClipItem, error) {
-	ch := make(chan ClipItem, 1) // Buffer of 1
+func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Duration) (<-chan Item, error) {
+	ch := make(chan Item, 1) // Buffer of 1
 
 	// Initialize lastContentHash
 	initialItem, err := m.GetCurrentContent(ctx)
@@ -219,7 +249,7 @@ func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Dur
 		fmt.Printf("Monitor: Error getting initial clipboard content: %v\n", err) // Replace with proper logging
 		m.lastContentHash = ""
 	} else if initialItem != nil {
-		m.lastContentHash = calculateHash(initialItem.Content)
+		m.lastContentHash = calculateHash([]byte(initialItem.Content))
 	} else {
 		m.lastContentHash = "" // Empty clipboard initially
 	}
@@ -256,7 +286,7 @@ func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Dur
 					continue
 				}
 
-				currentHash := calculateHash(item.Content)
+				currentHash := calculateHash([]byte(item.Content))
 				if currentHash != m.lastContentHash {
 					fmt.Printf("Monitor: Clipboard changed detected (Hash: %s)\n", currentHash) // Replace with logger
 					m.lastContentHash = currentHash
@@ -279,7 +309,7 @@ func (m *windowsClipboardManager) Monitor(ctx context.Context, interval time.Dur
 
 // GetCurrentContent attempts to read the current clipboard content on Windows.
 // Currently only supports text.
-func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*ClipItem, error) {
+func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*Item, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		// Log the error and proceed with an empty hostname.
@@ -288,14 +318,16 @@ func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*ClipI
 		hostname = ""                                                               // Default to empty if error
 	}
 	// 1. Try reading text
-	text, err := m.ReadText(ctx)
+	// Use the interface method GetText() which now calls windowsGetClipboardText
+	text, err := m.GetText()
 	if err != nil {
 		// Check for context cancellation first
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			return nil, err
-		}
+		// Note: GetText() as implemented now doesn't take context, so direct check might not be relevant here
+		// if err == context.Canceled || err == context.DeadlineExceeded {
+		// 	return nil, err
+		// }
 		// Check if the error is due to clipboard access issues
-		if _, ok := err.(syscall.Errno); !ok && !strings.Contains(err.Error(), "clipboard") {
+		if _, ok := err.(syscall.Errno); !ok && !strings.Contains(err.Error(), "clipboard") && !strings.Contains(err.Error(), "GetText (windows)") {
 			// If it's not a syscall error or a specific clipboard error message we added,
 			// it might be something else worth reporting.
 			fmt.Printf("GetCurrentContent: Non-clipboard error reading text: %v\n", err) // Replace with logger
@@ -305,11 +337,11 @@ func (m *windowsClipboardManager) GetCurrentContent(ctx context.Context) (*ClipI
 	}
 
 	if text != "" {
-		contentBytes := []byte(text) // Store as UTF-8
-		return &ClipItem{
+		// Content for Item should be string, not []byte, according to Item struct in clipboard.go
+		return &Item{
 			ID:        generateID(),
-			Type:      Text,
-			Content:   contentBytes,
+			Type:      TypeText, // Use ItemType const
+			Content:   text,     // Store as string
 			Timestamp: time.Now(),
 			Source:    hostname,
 		}, nil
@@ -338,4 +370,25 @@ func calculateHash(content []byte) string {
 // generateID creates a unique ID for a clip item.
 func generateID() string {
 	return uuid.NewString()
+}
+
+func init() {
+	// Initialize clipboard
+	err := clipboard.Init()
+	if err != nil {
+		panic(fmt.Sprintf("无法初始化剪贴板: %v", err))
+	}
+
+	getClipboardText = windowsGetClipboardText
+	setClipboardText = windowsSetClipboardText
+}
+
+func windowsGetClipboardText() (string, error) {
+	text := clipboard.Read(clipboard.FmtText)
+	return string(text), nil
+}
+
+func windowsSetClipboardText(text string) error {
+	clipboard.Write(clipboard.FmtText, []byte(text))
+	return nil
 }

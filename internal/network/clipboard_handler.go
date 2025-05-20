@@ -15,8 +15,8 @@ import (
 
 // ClipData represents the data structure for transferring clipboard content.
 type ClipData struct {
-	Type    clipboard.ClipType `json:"type"`
-	Content []byte             `json:"content"`
+	Type    clipboard.ItemType `json:"type"`             // Changed from ClipType to ItemType
+	Content string             `json:"content"`          // Changed from []byte to string to match Item.Content
 	Source  string             `json:"source,omitempty"` // Optional: for identifying the origin
 }
 
@@ -133,28 +133,29 @@ func (s *ClipboardServer) handleConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	log.Printf("Received clipboard data from %s: Type %v, Size %d bytes\n", conn.RemoteAddr().String(), data.Type, len(data.Content))
+	log.Printf("Received clipboard data from %s: Type %v, Content Length %d\n", conn.RemoteAddr().String(), data.Type, len(data.Content))
 
 	switch data.Type {
-	case clipboard.Text:
-		// Pass the original source of the data to WriteText
-		err := s.clipManager.WriteText(ctx, string(data.Content), data.Source)
+	case clipboard.TypeText: // Changed from clipboard.Text
+		// Pass the original source of the data to SetText
+		// Content is now string, no need to convert string(data.Content)
+		err := s.clipManager.SetText(data.Content, data.Source) // Changed from WriteText, removed ctx
 		if err != nil {
 			log.Printf("Failed to write text to clipboard: %v\n", err)
 		} else {
 			log.Println("Successfully wrote received text to clipboard.")
 		}
-	case clipboard.Image:
+	case clipboard.TypeImage: // Changed from clipboard.Image
 		// TODO: Implement image handling
-		// err := s.clipManager.WriteImage(ctx, data.Content, data.Source)
+		// err := s.clipManager.WriteImage(ctx, []byte(data.Content), data.Source) // Content is string, convert if needed
 		// if err != nil {
 		// 	log.Printf("Failed to write image to clipboard: %v", err)
 		// }
 		log.Println("Received image data, but image handling is not yet implemented.")
-	case clipboard.File:
+	case clipboard.TypeFile: // Changed from clipboard.File
 		// TODO: Implement file handling
 		// For security, be very careful with writing files or file paths.
-		// May need to deserialize []string from data.Content
+		// May need to deserialize []string from data.Content if it represents file paths
 		// err := s.clipManager.WriteFiles(ctx, filePaths, data.Source) // Assuming filePaths are extracted
 		log.Println("Received file data, but file handling is not yet implemented.")
 	default:

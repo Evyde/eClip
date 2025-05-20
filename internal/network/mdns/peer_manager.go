@@ -20,6 +20,8 @@ type PeerManager struct {
 	discoveryRunning bool
 	interfaces       []net.Interface
 	verboseLogging   bool
+	localHostName    string // 添加本地主机名字段
+	localInstanceID  string // 添加本地实例ID字段
 }
 
 // Peer 表示网络上的一个对等节点
@@ -31,18 +33,65 @@ type Peer struct {
 
 // NewPeerManager 创建一个新的对等节点管理器
 func NewPeerManager(localInfo *ServiceInfo, clipManager clipboard.Manager, syncInterval time.Duration, interfaces []net.Interface) *PeerManager {
+	// 生成唯一的实例ID
+	instanceID := fmt.Sprintf("%s-%s", localInfo.Instance, localInfo.HostName)
+
 	return &PeerManager{
-		localInfo:    localInfo,
-		clipManager:  clipManager,
-		knownPeers:   make(map[string]*Peer),
-		syncInterval: syncInterval,
-		interfaces:   interfaces,
+		localInfo:       localInfo,
+		clipManager:     clipManager,
+		knownPeers:      make(map[string]*Peer),
+		syncInterval:    syncInterval,
+		interfaces:      interfaces,
+		localHostName:   localInfo.HostName,
+		localInstanceID: instanceID,
 	}
 }
 
 // SetVerboseLogging 设置是否启用详细日志记录
 func (pm *PeerManager) SetVerboseLogging(verbose bool) {
 	pm.verboseLogging = verbose
+}
+
+func (pm *PeerManager) isLocalPeer(entry *ServiceInfo) bool {
+	// 使用多个条件来判断是否为本地节点
+	if entry.HostName == pm.localHostName {
+		return true
+	}
+
+	// 检查IP地址是否匹配本地接口
+	localAddrs := pm.getLocalAddresses()
+	for _, addr := range entry.AddrIPv4 {
+		if pm.isLocalAddress(addr, localAddrs) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (pm *PeerManager) isLocalAddress(addr net.IP, localAddrs []net.IP) bool {
+	for _, localAddr := range localAddrs {
+		if addr.Equal(localAddr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (pm *PeerManager) getLocalAddresses() []net.IP {
+	var addrs []net.IP
+	for _, iface := range pm.interfaces {
+		ifAddrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range ifAddrs {
+			if ipNet, ok := addr.(*net.IPNet); ok {
+				addrs = append(addrs, ipNet.IP)
+			}
+		}
+	}
+	return addrs
 }
 
 // StartDiscovery 启动服务发现
@@ -78,56 +127,16 @@ func (pm *PeerManager) StartDiscovery(ctx context.Context, serviceType string) {
 					return
 				}
 
-				// 跳过本地服务
-				if entry.Instance == pm.localInfo.Instance && entry.HostName == pm.localInfo.HostName {
+				// 改进本地节点检测
+				if pm.isLocalPeer(entry) {
 					if pm.verboseLogging {
 						logger.Log.Debugf("跳过本地服务: %s@%s", entry.Instance, entry.HostName)
 					}
 					continue
 				}
 
-				// 解析主机地址
-				var ipAddrs []net.IP
-				for _, addr := range entry.AddrIPv4 {
-					if !addr.IsUnspecified() && !addr.IsLoopback() {
-						ipAddrs = append(ipAddrs, addr)
-					}
-				}
-				for _, addr := range entry.AddrIPv6 {
-					if !addr.IsUnspecified() && !addr.IsLoopback() {
-						ipAddrs = append(ipAddrs, addr)
-					}
-				}
-
-				if len(ipAddrs) == 0 {
-					if pm.verboseLogging {
-						logger.Log.Warnf("发现的服务没有有效IP地址: %s@%s", entry.Instance, entry.HostName)
-					}
-					continue
-				}
-
-				// 创建或更新对等点
-				pm.mu.Lock()
-				peer, exists := pm.knownPeers[entry.HostName]
-				if !exists {
-					peer = &Peer{
-						ServiceInfo: entry,
-						LastSeen:    time.Now(),
-						Active:      true,
-					}
-					pm.knownPeers[entry.HostName] = peer
-					logger.Log.Infof("发现新对等点: %s@%s (IP: %v, 端口: %d)",
-						entry.Instance, entry.HostName, ipAddrs, entry.Port)
-				} else {
-					peer.LastSeen = time.Now()
-					peer.Active = true
-					peer.ServiceInfo = entry // 更新服务信息
-					if pm.verboseLogging {
-						logger.Log.Debugf("更新已知对等点: %s@%s (IP: %v, 端口: %d)",
-							entry.Instance, entry.HostName, ipAddrs, entry.Port)
-					}
-				}
-				pm.mu.Unlock()
+				// 处理远程节点
+				pm.handleRemotePeer(entry)
 			}
 		}
 	}()
@@ -159,8 +168,37 @@ func (pm *PeerManager) StartDiscovery(ctx context.Context, serviceType string) {
 	}()
 }
 
+func (pm *PeerManager) handleRemotePeer(entry *ServiceInfo) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	peerID := fmt.Sprintf("%s@%s", entry.Instance, entry.HostName)
+
+	if peer, exists := pm.knownPeers[peerID]; exists {
+		peer.LastSeen = time.Now()
+		peer.Active = true
+		peer.ServiceInfo = entry
+		if pm.verboseLogging {
+			logger.Log.Debugf("更新已知对等点: %s", peerID)
+		}
+	} else {
+		pm.knownPeers[peerID] = &Peer{
+			ServiceInfo: entry,
+			LastSeen:    time.Now(),
+			Active:      true,
+		}
+		logger.Log.Infof("发现新对等点: %s", peerID)
+	}
+}
+
 // SendToPeers 向所有活动对等点发送剪贴板项目
 func (pm *PeerManager) SendToPeers(item interface{}) {
+	// 添加本地标识
+	if clipItem, ok := item.(clipboard.Item); ok {
+		clipItem.Source = pm.localHostName
+		item = clipItem
+	}
+
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 

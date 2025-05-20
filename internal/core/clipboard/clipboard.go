@@ -2,57 +2,108 @@ package clipboard
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
-// ClipType defines the type of clipboard content.
-type ClipType int
+// ItemType represents the type of clipboard content
+type ItemType int
 
 const (
-	Text ClipType = iota
-	Image
-	File // For file paths
-	// Potentially other types like HTML, RTF, etc.
+	TypeText ItemType = iota
+	TypeImage
+	TypeFile
 )
 
-// ClipItem represents a single item stored in the clipboard history.
-type ClipItem struct {
-	ID        string    // Unique identifier (e.g., hash of content or timestamp)
-	Type      ClipType  // Type of the content
-	Content   []byte    // Raw content data
-	Timestamp time.Time // When the item was copied
-	Source    string    // Origin of the clip (e.g., device name) - useful for sync
-	FilePath  string    // Original file path, if Type is File
+// Item represents a clipboard item
+type Item struct {
+	ID        string
+	Type      ItemType
+	Content   string
+	Timestamp time.Time
+	Source    string
 }
 
-// Manager defines the interface for interacting with the system clipboard.
-// Implementations will be platform-specific.
+// Manager interface defines clipboard operations
 type Manager interface {
-	// ReadText reads text content from the clipboard.
-	ReadText(ctx context.Context) (string, error)
-	// WriteText writes text content to the clipboard, optionally specifying the source.
-	WriteText(ctx context.Context, text string, source string) error
-	// ReadImage reads image content from the clipboard.
-	ReadImage(ctx context.Context) ([]byte, error) // Returns raw image data (e.g., PNG bytes)
-	// WriteImage writes image content to the clipboard, optionally specifying the source.
-	WriteImage(ctx context.Context, imgData []byte, source string) error
-	// ReadFiles reads file paths from the clipboard.
-	ReadFiles(ctx context.Context) ([]string, error)
-	// WriteFiles writes file paths to the clipboard, optionally specifying the source.
-	WriteFiles(ctx context.Context, filePaths []string, source string) error
-	// Monitor starts monitoring the clipboard for changes.
-	// It sends new ClipItem data to the provided channel.
-	Monitor(ctx context.Context, interval time.Duration) (<-chan ClipItem, error)
-	// GetCurrentContent attempts to read the current clipboard content,
-	// determines its type, and returns it as a ClipItem.
-	GetCurrentContent(ctx context.Context) (*ClipItem, error)
+	GetText() (string, error)
+	SetText(text string, source string) error
+	Monitor(ctx context.Context, interval time.Duration) (<-chan Item, error)
 }
 
-// NewManager creates a new platform-specific clipboard manager.
-// This function's implementation will be in platform-specific files
-// using build constraints (e.g., clipboard_darwin.go, clipboard_windows.go).
-func NewManager() (Manager, error) {
-	// This function body will be provided by platform-specific files.
-	// See clipboard_darwin.go and clipboard_windows.go
-	return newManager()
+// clipboardManager implements the Manager interface
+type clipboardManager struct {
+	lastContent string
 }
+
+// NewManager creates a new clipboard manager
+func NewManager() (Manager, error) {
+	return &clipboardManager{}, nil
+}
+
+// GetText retrieves text from clipboard
+func (m *clipboardManager) GetText() (string, error) {
+	// Platform-specific implementation
+	text, err := getClipboardText()
+	if err != nil {
+		return "", fmt.Errorf("获取剪贴板内容失败: %w", err)
+	}
+	return text, nil
+}
+
+// SetText sets text to clipboard
+func (m *clipboardManager) SetText(text string, source string) error {
+	// Platform-specific implementation
+	err := setClipboardText(text)
+	if err != nil {
+		return fmt.Errorf("设置剪贴板内容失败: %w", err)
+	}
+	m.lastContent = text
+	return nil
+}
+
+// Monitor starts monitoring clipboard changes
+func (m *clipboardManager) Monitor(ctx context.Context, interval time.Duration) (<-chan Item, error) {
+	items := make(chan Item, 1)
+
+	go func() {
+		defer close(items)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		var lastContent string
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				content, err := m.GetText()
+				if err != nil {
+					continue
+				}
+
+				if content != lastContent {
+					lastContent = content
+					item := Item{
+						ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+						Type:      TypeText,
+						Content:   content,
+						Timestamp: time.Now(),
+						Source:    "", // 确保本地更改的Source为空
+					}
+					items <- item
+				}
+			}
+		}
+	}()
+
+	return items, nil
+}
+
+// Platform-specific implementations
+// These functions should be implemented in clipboard_windows.go and clipboard_darwin.go
+
+var (
+	getClipboardText func() (string, error)
+	setClipboardText func(text string) error
+)

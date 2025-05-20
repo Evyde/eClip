@@ -5,7 +5,7 @@ import (
 	"eClip/internal/logger"
 	"fmt"
 	"net"
-	"os"
+	"os" // Added import for os.Hostname
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +31,12 @@ type ServiceInfo struct {
 
 // RegisterService 注册mDNS服务并返回服务信息和服务监听器
 func RegisterService(ctx context.Context, instanceName string, serviceType string, txtRecords []string) (*zeroconf.Server, *ServiceInfo, net.Listener, []net.Interface, error) {
+	// Get hostname early
+	host, err := os.Hostname()
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to get hostname: %w", err)
+	}
+
 	// 选择合适的网络接口
 	ifaces, err := selectInterfaces()
 	if err != nil {
@@ -60,43 +66,27 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		return nil, nil, nil, nil, fmt.Errorf("解析端口号失败: %w", err)
 	}
 
-	// 格式化服务类型
+	// 修改服务类型格式化逻辑
 	if !strings.HasPrefix(serviceType, "_") {
 		serviceType = "_" + serviceType
 	}
-	if !strings.Contains(serviceType, "._") {
-		serviceType = serviceType + "._tcp"
+	if !strings.Contains(serviceType, "._tcp") {
+		serviceType = strings.TrimSuffix(serviceType, "._tcp") + "._tcp"
 	}
 
-	// 确保实例名称非空
-	if instanceName == "" {
-		instanceName = "eClip-Device"
-	}
+	// 简化服务名称处理
+	serviceName := strings.TrimPrefix(serviceType, "_")
+	serviceName = strings.TrimSuffix(serviceName, "._tcp")
 
-	// 获取主机名用于注册
-	hostname, err := os.Hostname()
-	if err != nil {
-		listener.Close()
-		return nil, nil, nil, nil, fmt.Errorf("获取主机名失败: %w", err)
-	}
-
-	// 提取服务名称，移除前缀 "_"
-	serviceName := serviceType
-	if strings.HasPrefix(serviceName, "_") {
-		serviceName = serviceName[1:]
-	}
-	// 分离服务名和协议
-	parts := strings.SplitN(serviceName, "._", 2)
-	serviceName = parts[0]
-
-	// 使用简化版本的注册方法
+	// Attempt a simpler registration first, passing interfaces directly.
+	// The 'opts' construction seems problematic with the current zeroconf version/API.
 	server, err := zeroconf.Register(
-		instanceName,
-		serviceName,
-		"local.",
-		port,
-		txtRecords,
-		nil, // 不使用任何选项以提高兼容性
+		instanceName, // instance name
+		serviceName,  // service type
+		"local.",     // domain
+		port,         // port
+		txtRecords,   // text records
+		ifaces,       // network interfaces
 	)
 
 	if err != nil {
@@ -105,8 +95,8 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	}
 
 	// 确保主机名有 .local 后缀
-	if !strings.HasSuffix(hostname, ".local") {
-		hostname = hostname + ".local"
+	if !strings.HasSuffix(host, ".local") {
+		host = host + ".local"
 	}
 
 	// 创建服务信息
@@ -114,7 +104,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Instance: instanceName,
 		Service:  serviceName,
 		Domain:   "local.",
-		HostName: hostname,
+		HostName: host, // Use the fetched host variable
 		Port:     port,
 		TTL:      60, // 固定TTL值
 		Text:     txtRecords,

@@ -15,6 +15,11 @@ import (
 	"github.com/google/uuid" // Using UUID for unique IDs
 )
 
+func init() {
+	getClipboardText = darwinGetClipboardText
+	setClipboardText = darwinSetClipboardText
+}
+
 // darwinClipboardManager implements the Manager interface for macOS.
 type darwinClipboardManager struct {
 	lastContentHash string // Stores the hash of the last known content to detect changes
@@ -26,37 +31,29 @@ func newManager() (Manager, error) {
 	return &darwinClipboardManager{}, nil
 }
 
-// ReadText reads text from the macOS clipboard using pbpaste.
-func (m *darwinClipboardManager) ReadText(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "pbpaste")
-	output, err := cmd.Output()
+// GetText retrieves text from clipboard. This method implements the Manager interface.
+func (m *darwinClipboardManager) GetText() (string, error) {
+	// This implementation uses the darwinGetClipboardText function,
+	// which is consistent with how platform-specific functions are set up.
+	text, err := darwinGetClipboardText()
 	if err != nil {
 		// pbpaste exits with an error if the clipboard is empty or doesn't contain text.
 		// We treat this as empty content rather than a fatal error.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return "", nil // No text content or empty
 		}
-		// Check if context was cancelled
-		if ctx.Err() == context.Canceled || ctx.Err() == context.DeadlineExceeded {
-			return "", ctx.Err()
-		}
-		return "", fmt.Errorf("failed to execute pbpaste: %w", err)
+		return "", fmt.Errorf("GetText (darwin): %w", err)
 	}
-	return string(output), nil
+	return text, nil
 }
 
-// WriteText writes text to the macOS clipboard using pbcopy.
-func (m *darwinClipboardManager) WriteText(ctx context.Context, text string, source string) error {
+// SetText sets text to clipboard. This method implements the Manager interface.
+func (m *darwinClipboardManager) SetText(text string, source string) error {
 	// source string is part of the interface but not directly used here for pbcopy
-	cmd := exec.CommandContext(ctx, "pbcopy")
-	cmd.Stdin = strings.NewReader(text)
-	err := cmd.Run()
+	// This implementation uses the darwinSetClipboardText function.
+	err := darwinSetClipboardText(text)
 	if err != nil {
-		// Check if context was cancelled
-		if ctx.Err() == context.Canceled || ctx.Err() == context.DeadlineExceeded {
-			return ctx.Err()
-		}
-		return fmt.Errorf("failed to execute pbcopy: %w", err)
+		return fmt.Errorf("SetText (darwin): %w", err)
 	}
 	// Update last known hash after writing
 	newHash := calculateHash([]byte(text))
@@ -216,8 +213,8 @@ func (m *darwinClipboardManager) WriteFiles(ctx context.Context, filePaths []str
 }
 
 // Monitor starts polling the clipboard for changes on macOS.
-func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Duration) (<-chan ClipItem, error) {
-	ch := make(chan ClipItem, 1) // Buffer of 1 to avoid blocking on send
+func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Duration) (<-chan Item, error) {
+	ch := make(chan Item, 1) // Buffer of 1 to avoid blocking on send
 
 	// Initialize lastContentHash with current content
 	initialItem, err := m.GetCurrentContent(ctx)
@@ -226,7 +223,7 @@ func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Dura
 		fmt.Printf("Monitor: Error getting initial clipboard content: %v\n", err) // Replace with proper logging
 		m.lastContentHash = ""
 	} else if initialItem != nil {
-		m.lastContentHash = calculateHash(initialItem.Content)
+		m.lastContentHash = calculateHash([]byte(initialItem.Content)) // Ensure content is []byte for hash
 	} else {
 		m.lastContentHash = "" // Empty clipboard initially
 	}
@@ -261,7 +258,7 @@ func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Dura
 					continue
 				}
 
-				currentHash := calculateHash(item.Content)
+				currentHash := calculateHash([]byte(item.Content)) // Ensure content is []byte for hash
 				// fmt.Printf("Monitor: Current Hash: %s, Last Hash: %s\n", currentHash, m.lastContentHash) // Debug log
 
 				if currentHash != m.lastContentHash {
@@ -288,91 +285,84 @@ func (m *darwinClipboardManager) Monitor(ctx context.Context, interval time.Dura
 }
 
 // GetCurrentContent attempts to read the current clipboard content on macOS.
-// Currently only supports text.
-func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*ClipItem, error) {
+func (m *darwinClipboardManager) GetCurrentContent(ctx context.Context) (*Item, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		// Log the error and proceed with an empty hostname.
-		// The peer_manager might fill it in later.
 		fmt.Printf("GetCurrentContent: Warning: Failed to get hostname: %v\n", err) // Replace with proper logging
-		hostname = ""                                                               // Default to empty if error
+		hostname = ""
 	}
 
 	// 1. Try reading text
-	text, textErr := m.ReadText(ctx)
+	// Use the interface method GetText() which now calls darwinGetClipboardText
+	text, textErr := m.GetText() // Removed ctx as GetText() doesn't take it
 	if textErr != nil {
-		if textErr == context.Canceled || textErr == context.DeadlineExceeded {
-			return nil, textErr // Propagate context errors
-		}
-		// Log non-critical errors and continue to check other types
-		fmt.Printf("GetCurrentContent: Info: Error reading text (might be non-text content): %v\n", textErr) // Replace with logger
+		// Context cancellation check might be less relevant here if GetText doesn't use ctx
+		// if textErr == context.Canceled || textErr == context.DeadlineExceeded {
+		// 	return nil, textErr
+		// }
+		fmt.Printf("GetCurrentContent: Info: Error reading text (might be non-text content): %v\n", textErr)
 	}
 
-	if text != "" { // Check text even if textErr was not nil but text is populated (e.g. pbpaste specific exit codes)
-		contentBytes := []byte(text)
-		return &ClipItem{
+	if text != "" {
+		return &Item{
 			ID:        generateID(),
-			Type:      Text,
-			Content:   contentBytes,
+			Type:      TypeText, // Use ItemType const
+			Content:   text,     // Content is string
 			Timestamp: time.Now(),
 			Source:    hostname,
 		}, nil
 	}
 
 	// 2. Try reading image
-	imageData, imgErr := m.ReadImage(ctx)
+	imageData, imgErr := m.ReadImage(ctx) // ReadImage still uses context
 	if imgErr != nil {
 		if imgErr == context.Canceled || imgErr == context.DeadlineExceeded {
-			return nil, imgErr // Propagate context errors
+			return nil, imgErr
 		}
-		// Log non-critical errors (e.g. "no image on clipboard") and continue
-		// fmt.Printf("GetCurrentContent: Info: Error reading image (might be non-image content or empty): %v\n", imgErr) // Replace with logger
+		// fmt.Printf("GetCurrentContent: Info: Error reading image: %v\n", imgErr)
 	}
 
 	if len(imageData) > 0 {
-		return &ClipItem{
+		// Item.Content is string. Convert imageData (byte slice) to string.
+		// For binary data, base64 encoding is common. For simplicity, using string() for now,
+		// but this might not be ideal for all binary data.
+		return &Item{
 			ID:        generateID(),
-			Type:      Image,
-			Content:   imageData,
+			Type:      TypeImage,         // Use ItemType const
+			Content:   string(imageData), // TODO: Consider base64 for binary data
 			Timestamp: time.Now(),
 			Source:    hostname,
 		}, nil
 	}
 
 	// 3. Try reading files
-	filePaths, fileErr := m.ReadFiles(ctx)
+	filePaths, fileErr := m.ReadFiles(ctx) // ReadFiles still uses context
 	if fileErr != nil {
 		if fileErr == context.Canceled || fileErr == context.DeadlineExceeded {
-			return nil, fileErr // Propagate context errors
+			return nil, fileErr
 		}
-		// fmt.Printf("GetCurrentContent: Info: Error reading files (might be non-file content or empty): %v\n", fileErr) // Replace with logger
+		// fmt.Printf("GetCurrentContent: Info: Error reading files: %v\n", fileErr)
 	}
 
 	if len(filePaths) > 0 {
-		// For now, handle only the first file if multiple are copied.
 		filePath := filePaths[0]
-		fileContent, err := readFileContent(filePath) // Helper function to read file bytes
+		fileContentBytes, err := readFileContent(filePath)
 		if err != nil {
-			fmt.Printf("GetCurrentContent: Error reading file content for %s: %v\n", filePath, err) // Replace with logger
-			// Decide if we should return an error or just skip this item
+			fmt.Printf("GetCurrentContent: Error reading file content for %s: %v\n", filePath, err)
 			return nil, fmt.Errorf("failed to read content of file %s: %w", filePath, err)
 		}
-
-		// Limit file size for clipboard? For now, no limit here.
-		// Consider adding a max file size check.
-
-		return &ClipItem{
+		// Item.Content is string. Convert fileContentBytes to string.
+		return &Item{
 			ID:        generateID(),
-			Type:      File,
-			Content:   fileContent,
+			Type:      TypeFile,                 // Use ItemType const
+			Content:   string(fileContentBytes), // TODO: Consider base64 for binary data. Store path in Item?
 			Timestamp: time.Now(),
 			Source:    hostname,
-			FilePath:  filePath, // Store the original file path
+			// FilePath:  filePath, // Item struct doesn't have FilePath. Store in Content or extend Item.
 		}, nil
 	}
 
-	// If no supported content type is found or clipboard is empty
-	return nil, nil // Return nil, nil to indicate empty or unsupported content
+	return nil, nil
 }
 
 // readFileContent reads the content of a file given its path.
@@ -403,4 +393,19 @@ func calculateHash(content []byte) string {
 // generateID creates a unique ID for a clip item.
 func generateID() string {
 	return uuid.NewString()
+}
+
+func darwinGetClipboardText() (string, error) {
+	cmd := exec.Command("pbpaste")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("pbpaste failed: %w", err)
+	}
+	return string(output), nil
+}
+
+func darwinSetClipboardText(text string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
