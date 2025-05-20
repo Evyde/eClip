@@ -80,14 +80,6 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		return nil, nil, nil, nil, fmt.Errorf("获取主机名失败: %w", err)
 	}
 
-	// 注册mDNS服务
-	var opts []zeroconf.RegisterOption
-	opts = append(opts, zeroconf.SelectIfaces(ifaces))
-
-	// 测试期间使用较短的TTL
-	ttl := uint32(60)
-	opts = append(opts, zeroconf.TTL(ttl))
-
 	// 提取服务名称，移除前缀 "_"
 	serviceName := serviceType
 	if strings.HasPrefix(serviceName, "_") {
@@ -97,13 +89,14 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 	parts := strings.SplitN(serviceName, "._", 2)
 	serviceName = parts[0]
 
+	// 使用简化版本的注册方法
 	server, err := zeroconf.Register(
-		instanceName, // 实例名称
-		serviceName,  // 服务类型，没有前缀 "_"
-		"local.",     // 域
-		port,         // 端口
-		txtRecords,   // TXT记录
-		opts...,      // 选项
+		instanceName,
+		serviceName,
+		"local.",
+		port,
+		txtRecords,
+		nil, // 不使用任何选项以提高兼容性
 	)
 
 	if err != nil {
@@ -123,7 +116,7 @@ func RegisterService(ctx context.Context, instanceName string, serviceType strin
 		Domain:   "local.",
 		HostName: hostname,
 		Port:     port,
-		TTL:      ttl,
+		TTL:      60, // 固定TTL值
 		Text:     txtRecords,
 	}
 

@@ -13,7 +13,7 @@ import (
 // PeerManager 管理网络上的对等节点
 type PeerManager struct {
 	localInfo        *ServiceInfo
-	clipManager      *clipboard.Manager
+	clipManager      clipboard.Manager // Changed from *clipboard.Manager to clipboard.Manager
 	knownPeers       map[string]*Peer
 	syncInterval     time.Duration
 	mu               sync.RWMutex
@@ -30,7 +30,7 @@ type Peer struct {
 }
 
 // NewPeerManager 创建一个新的对等节点管理器
-func NewPeerManager(localInfo *ServiceInfo, clipManager *clipboard.Manager, syncInterval time.Duration, interfaces []net.Interface) *PeerManager {
+func NewPeerManager(localInfo *ServiceInfo, clipManager clipboard.Manager, syncInterval time.Duration, interfaces []net.Interface) *PeerManager {
 	return &PeerManager{
 		localInfo:    localInfo,
 		clipManager:  clipManager,
