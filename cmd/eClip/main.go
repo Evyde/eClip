@@ -152,8 +152,21 @@ func main() {
 	peerManagerSyncInterval := 2 * time.Second // 用户建议的同步间隔 (原为 5s)
 	// TODO: 从配置读取 PeerManager 同步间隔 config.GetConfig().Sync.DiscoveryIntervalSeconds
 
+	// Log the selected network interfaces for debugging
+	logger.Log.Debugf("使用的网络接口: %v", selectedInterfaces)
+	for i, iface := range selectedInterfaces {
+		addrs, _ := iface.Addrs()
+		var addrStrings []string
+		for _, addr := range addrs {
+			addrStrings = append(addrStrings, addr.String())
+		}
+		logger.Log.Debugf("接口 %d: %s (%s) 地址: %v", i, iface.Name, iface.Flags.String(), addrStrings)
+	}
+
 	// 使用声明的 peerManager 变量
 	peerManager = mdns.NewPeerManager(localServiceInfo, clipManager, peerManagerSyncInterval, selectedInterfaces)
+	// 开启额外的调试日志，帮助排查跨平台问题
+	peerManager.SetVerboseLogging(true)
 	peerManager.StartDiscovery(monitorCtx, mdns.DefaultServiceType) // 使用 monitorCtx
 	// peerManager.StartSyncServer(monitorCtx) // This line is removed as PeerManager no longer starts its own server.
 	// Incoming clipboard data is handled by network.ClipboardServer.

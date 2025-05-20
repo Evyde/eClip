@@ -5,11 +5,11 @@ import (
 	"eClip/internal/logger"
 	"fmt"
 	"net"
-	"os"      // 新增导入，用于潜在的 OS 特定逻辑
-	"strings" // 新增导入
+	"os"
+	"strings"
 	"time"
 
-	"github.com/libp2p/zeroconf/v2"
+	"github.com/grandcat/zeroconf"
 )
 
 const (
@@ -28,9 +28,10 @@ type ServiceInfo struct {
 	Domain   string
 	HostName string
 	Port     int
+	TTL      uint32
+	Text     []string
 	AddrIPv4 []net.IP
 	AddrIPv6 []net.IP
-	Text     []string
 }
 
 // getSuitableInterfaces 获取用于 mDNS 注册的合适网络接口。
@@ -245,4 +246,99 @@ func DiscoverServices(ctx context.Context, serviceType string, localServiceInfo 
 	logger.Log.Debugf("DiscoverServices: discoveryCtx 完成.")
 
 	return discoveredServices, nil
+}
+
+// 选择合适的网络接口
+func selectInterfaces() ([]net.Interface, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []net.Interface
+	for _, iface := range ifaces {
+		// 忽略禁用的接口
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		// 忽略回环接口
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		// 检查接口是否有可用地址
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		hasValidAddr := false
+		for _, addr := range addrs {
+			ip := getIPFromAddr(addr)
+			if ip == nil {
+				continue
+			}
+
+			// 跳过链路本地地址
+			if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				continue
+			}
+
+			// 有效地址
+			hasValidAddr = true
+			break
+		}
+
+		if hasValidAddr {
+			filtered = append(filtered, iface)
+		}
+	}
+
+	return filtered, nil
+}
+
+// 获取网络接口的所有地址
+func getAllInterfaceAddrs(ifaces []net.Interface) ([]net.Addr, error) {
+	var allAddrs []net.Addr
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		allAddrs = append(allAddrs, addrs...)
+	}
+	return allAddrs, nil
+}
+
+// 从网络地址获取IP
+func getIPFromAddr(addr net.Addr) net.IP {
+	switch v := addr.(type) {
+	case *net.IPNet:
+		return v.IP
+	case *net.IPAddr:
+		return v.IP
+	}
+	return nil
+}
+
+// 获取本地主机名
+func getLocalHostname(server *zeroconf.Server) (string, error) {
+	hostname, err := net.LookupCNAME(server.TTL())
+	if err != nil {
+		hostname, err = os.Hostname()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// 移除尾部的点
+	hostname = strings.TrimSuffix(hostname, ".")
+
+	// 确保有.local后缀
+	if !strings.HasSuffix(hostname, ".local") {
+		hostname = hostname + ".local"
+	}
+
+	return hostname, nil
 }
