@@ -65,15 +65,35 @@ func (b *Browser) Browse(ctx context.Context) <-chan *ServiceInfo {
 		}
 		b.mu.Unlock()
 
-		// 解析服务类型名称
-		serviceName, serviceSubtype := parseServiceType(b.serviceType)
-		logger.Log.Debugf("开始浏览mDNS服务 %s (子类型: %s)", serviceName, serviceSubtype)
+		// 解析服务类型
+		serviceName := b.serviceType
+
+		// 从服务类型中提取服务名称和域
+		parts := strings.Split(serviceName, ".")
+		var serviceNamePart string
+
+		for _, part := range parts {
+			if strings.HasPrefix(part, "_") {
+				serviceNamePart = part
+				break
+			}
+		}
+
+		if serviceNamePart == "" {
+			logger.Log.Errorf("无效的服务类型格式: %s", b.serviceType)
+			return
+		}
+
+		// 去除前缀 "_"
+		serviceNamePart = serviceNamePart[1:]
+
+		logger.Log.Debugf("开始浏览mDNS服务: %s, domain: local.", serviceNamePart)
 
 		// 创建结果通道
 		results := make(chan *zeroconf.ServiceEntry, 10)
 
-		// 启动浏览
-		err := b.resolver.Browse(ctx, serviceName, serviceSubtype, results)
+		// 启动浏览 - 修复 zeroconf.Browse 未定义的问题
+		err := b.resolver.Browse(ctx, serviceNamePart, "local.", results)
 		if err != nil {
 			logger.Log.Errorf("启动mDNS浏览失败: %v", err)
 			return

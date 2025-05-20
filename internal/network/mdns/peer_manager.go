@@ -2,14 +2,12 @@ package mdns
 
 import (
 	"context"
+	"eClip/internal/core/clipboard"
+	"eClip/internal/logger"
 	"fmt"
-	"net" // 新增导入
+	"net"
 	"sync"
 	"time"
-
-	"eClip/internal/core/clipboard"
-	"eClip/internal/logger" // 假设有一个日志包
-	// Added for network.ClipData
 )
 
 // PeerManager 管理网络上的对等节点
@@ -31,15 +29,7 @@ type Peer struct {
 	Active      bool
 }
 
-const (
-	// syncServerPortOffset = 1000 // No longer needed as PeerManager doesn't run its own server
-	defaultDeviceID = "unknown_device" // 默认设备ID
-	connectTimeout  = 5 * time.Second
-	// readDeadline         = 10 * time.Second // No longer needed here, ClipboardServer handles its own read deadlines
-)
-
-// NewPeerManager 创建一个新的 PeerManager
-// clipManager is removed as PeerManager no longer handles incoming data directly.
+// NewPeerManager 创建一个新的对等节点管理器
 func NewPeerManager(localInfo *ServiceInfo, clipManager *clipboard.Manager, syncInterval time.Duration, interfaces []net.Interface) *PeerManager {
 	return &PeerManager{
 		localInfo:    localInfo,
@@ -170,7 +160,7 @@ func (pm *PeerManager) StartDiscovery(ctx context.Context, serviceType string) {
 }
 
 // SendToPeers 向所有活动对等点发送剪贴板项目
-func (pm *PeerManager) SendToPeers(item clipboard.Item) {
+func (pm *PeerManager) SendToPeers(item interface{}) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
